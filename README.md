@@ -95,7 +95,7 @@ npm install
 ### Step 5: Start the Bot
 
 Run the bot using:
-```
+```bash
 npm run start
 ```
 
@@ -121,8 +121,8 @@ npm run start
 ## Usage
 
 1. Ensure the bot is running by executing:
-   ```
-npm run start
+   ```bash
+   npm run start
    ```
 2. Monitor the console for real-time logs of:
    - Tokens bought and sold.
