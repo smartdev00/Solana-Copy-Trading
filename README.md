@@ -28,6 +28,9 @@ The Solana Copy Trading Bot is an automated trading solution designed to replica
   - Configuration via a single `config.ts` file.
   - Human-readable JSON logs for tracking trades.
 
+- **Requires Wrapped Solana (WSOL)**:
+  - The bot uses WSOL for all trading activities. Ensure your wallet has sufficient WSOL before running the bot.
+
 ---
 
 ## Prerequisites
@@ -165,20 +168,18 @@ Below are screenshots illustrating the bot correctly tracking and copying trades
 2. **Minimum Value of Tracked Wallet Trade**:
    - Implement a feature to copy trades only if the tracked wallet's trade size exceeds a user-defined threshold, ensuring "high commitment" trades.
 
-3. **Amount of Token to Sell**:
-   - Ensure the bot always sells 100% of a token when a sell condition is met.
+3. **Optional Token Liquidity Check**:
+   - Implement a feature to evaluate token liquidity during tracked wallet buys and proceed with the trade only if liquidity is sufficient to avoid adverse price impacts.
 
-4. **Ignore Unmatched Sell Alerts**:
-   - Implement logic to ignore sell alerts for tokens not bought by the bot.
-
-5. **Optional Stop Loss (SL) Setting for Each Wallet**:
+4. **Optional Stop Loss (SL) Setting for Each Wallet**:
    - Add the ability to specify a Stop Loss percentage for each wallet, triggering an automatic sell if the SL threshold is reached.
+   - **Developer response**: "This is impossible because of RPC node server issues. Without our own local node server, we cannot implement subscription-based functions such as a Stop Loss."
+
+5. **Amount of Token to Sell**:
+   - **Confirmed**: The bot always sells 100% of tokens held in your wallet when the tracked wallet sells the same token.
 
 6. **Exclude Tokens by Marketplace**:
-   - Add a feature to exclude tokens from specified marketplaces, e.g., pump.fun, for risk management.
-
-7. **Dynamic Price Change Filtering**:
-   - Allow users to specify token % change limits between buy detection and trade execution.
+   - **Confirmed**: The bot only interacts with tokens on Raydium and does not trade tokens from other marketplaces like pump.fun. No further action is needed for this feature.
 
 ---
 
