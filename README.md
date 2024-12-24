@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Solana Copy Trading Bot is an automated trading solution designed to replicate token buy and sell trades from specific Solana wallets in real time. The bot leverages the Solana blockchain’s capabilities along with the Helius API to monitor target wallets and execute trades based on pre-defined rules such as Take Profit (TP) and Stop Loss (SL). The bot is designed for Windows environments and is suitable for users with basic to intermediate technical knowledge.
+The Solana Copy Trading Bot is an automated trading solution designed to replicate token buy and sell trades from specific Solana wallets in real time. The bot leverages the Solana blockchain’s capabilities along with the Helius API to monitor target wallets and execute trades based on pre-defined rules such as Take Profit (TP). The bot is designed for Windows environments and is suitable for users with basic to intermediate technical knowledge.
 
 ---
 
@@ -14,12 +14,12 @@ The Solana Copy Trading Bot is an automated trading solution designed to replica
 
 - **Customizable Trade Parameters**:
   - Define trade size.
-  - Set Take Profit (TP) and Stop Loss (SL) thresholds for trades.
+  - Set Take Profit (TP) thresholds for trades.
 
 - **Transaction Safety**:
   - Only sells tokens if:
     - The source wallet sells the token.
-    - TP or SL targets are triggered.
+    - TP targets are triggered.
 
 - **Support for Liquidity Pools**:
   - Integrates with Raydium Liquidity Pool for token swaps.
@@ -90,7 +90,7 @@ npm install
    - `TRADE_AMOUNT`: Amount of SOL to use per trade (e.g., `10000000` for 0.01 SOL).
    - `COMPUTE_PRICE`: A static variable for internal calculations (default: `100000`).
    - `LIMIT_ORDER`: Set Take Profit as a multiplier (e.g., `1.25` for 25% profit, but typically follows the target wallet's actions).
-   - `SLIPPAGE`: Input slippage tolerance (default value: `5`).
+   - `SLIPPAGE`: Input slippage tolerance for trades (default value: `5`).
 
 ### Step 5: Start the Bot
 
@@ -113,8 +113,8 @@ npm run start
 | `WALLET`               | Your trading wallet’s private key in base58 format.                                         |
 | `TRADE_AMOUNT`         | Amount to trade per transaction (in lamports; 1 SOL = 1,000,000,000 lamports).              |
 | `COMPUTE_PRICE`        | A static variable for internal calculations (default: `100000`).                            |
-| `LIMIT_ORDER`          | Percentage profit above the buy price to trigger an automatic sell.                         |
-| `SLIPPAGE`             | Percentage loss below the buy price to trigger an automatic sell.                           |
+| `LIMIT_ORDER`          | Multiplier for setting Take Profit (TP) above the buy price (e.g., `1.25` for 25% profit).  |
+| `SLIPPAGE`             | Maximum allowable price variation during trade execution (default: `5`).                    |
 
 ---
 
@@ -157,10 +157,13 @@ npm run start
 4. **Ignore Unmatched Sell Alerts**:
    - Implement logic to ignore sell alerts for tokens not bought by the bot.
 
-5. **Exclude Tokens by Marketplace**:
+5. **Optional Stop Loss (SL) Setting for Each Wallet**:
+   - Add the ability to specify a Stop Loss percentage for each wallet, triggering an automatic sell if the SL threshold is reached.
+
+6. **Exclude Tokens by Marketplace**:
    - Add a feature to exclude tokens from specified marketplaces, e.g., pump.fun, for risk management.
 
-6. **Dynamic Price Change Filtering**:
+7. **Dynamic Price Change Filtering**:
    - Allow users to specify token % change limits between buy detection and trade execution.
 
 ---
