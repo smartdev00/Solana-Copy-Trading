@@ -36,7 +36,7 @@ To run the Solana Copy Trading Bot, ensure you have the following:
 
 1. **Windows Pro PC**
 2. **Software Requirements**:
-   - Node.js (v16 or higher)
+   - Node.js (20.14.0)
    - TypeScript
    - Yarn (optional, if preferred over npm)
 3. **Accounts and API Keys**:
@@ -65,7 +65,7 @@ To run the Solana Copy Trading Bot, ensure you have the following:
 
 1. Clone the repository to your local machine:
    ```
-   git clone <repository-url>
+   git clone <https://github.com/GameSoftInteractive/copy-trading-bot-solana.git>
    ```
 2. Navigate to the project directory:
    ```
@@ -96,6 +96,7 @@ npm install
 
 Run the bot using:
 ```bash
+npm run build
 npm run start
 ```
 
@@ -109,7 +110,7 @@ npm run start
 |------------------------|----------------------------------------------------------------------------------------------|
 | `TARGET_WALLET_ADDRESS`| The wallet address to monitor for trades.                                                   |
 | `RAYDIUM_LIQUIDITYPOOL_V4` | Static variable for the Raydium Liquidity Pool.                                             |
-| `SOL_ADDRESS`          | Static variable for the Solana token address.                                                |
+| `SOL_ADDRESS`          | Static variable for the WSol token address.                                                |
 | `WALLET`               | Your trading wallet’s private key in base58 format.                                         |
 | `TRADE_AMOUNT`         | Amount to trade per transaction (in lamports; 1 SOL = 1,000,000,000 lamports).              |
 | `COMPUTE_PRICE`        | A static variable for internal calculations (default: `100000`).                            |
