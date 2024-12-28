@@ -88,9 +88,9 @@ npm install
 2. Update the following parameters:
    - `TARGET_WALLET_ADDRESS`: Public key of the wallet to copy trades from.
    - `RAYDIUM_LIQUIDITYPOOL_V4`: Static variable defining the liquidity pool (default: `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8`).
-   - `SOL_ADDRESS`: Static variable defining the Solana token address (default: `So11111111111111111111111111111111111111112`).
+   - `SOL_ADDRESS`: Static variable defining the wrapped Solana token address (default: `So11111111111111111111111111111111111111112`).
    - `WALLET`: Replace with your private key (base58-encoded).
-   - `TRADE_AMOUNT`: Amount of SOL to use per trade (e.g., `10000000` for 0.01 SOL).
+   - `TRADE_AMOUNT`: Amount of WSOL to use per trade (e.g., `10000000` for 0.01 WSOL).
    - `COMPUTE_PRICE`: A static variable for internal calculations (default: `100000`).
    - `LIMIT_ORDER`: Set Take Profit as a multiplier (e.g., `1.25` for 25% profit, but typically follows the target wallet's actions).
    - `SLIPPAGE`: Input slippage tolerance for trades (default value: `5`).
@@ -112,9 +112,9 @@ npm run start
 |------------------------|----------------------------------------------------------------------------------------------|
 | `TARGET_WALLET_ADDRESS`| The wallet address to monitor for trades.                                                   |
 | `RAYDIUM_LIQUIDITYPOOL_V4` | Static variable for the Raydium Liquidity Pool.                                             |
-| `SOL_ADDRESS`          | Static variable for the Solana token address.                                                |
+| `SOL_ADDRESS`          | Static variable for the wrapped Solana token address.                                        |
 | `WALLET`               | Your trading wallet’s private key in base58 format.                                         |
-| `TRADE_AMOUNT`         | Amount to trade per transaction (in lamports; 1 SOL = 1,000,000,000 lamports).              |
+| `TRADE_AMOUNT`         | Amount to trade per transaction (in lamports; 1 WSOL = 1,000,000,000 lamports).             |
 | `COMPUTE_PRICE`        | A static variable for internal calculations (default: `100000`).                            |
 | `LIMIT_ORDER`          | Multiplier for setting Take Profit (TP) above the buy price (e.g., `1.25` for 25% profit).  |
 | `SLIPPAGE`             | Maximum allowable price variation during trade execution (default: `5`).                    |
