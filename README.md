@@ -30,6 +30,7 @@ The Solana Copy Trading Bot is an automated trading solution designed to replica
 
 - **Requires Wrapped Solana (WSOL)**:
   - The bot uses WSOL for all trading activities. Ensure your wallet has sufficient WSOL before running the bot.
+  - Refer to the [Copy Trading - Prepare Wallet with WSOL](copy-trading-get-wsol.pdf) guide for detailed steps to prepare your wallet.
 
 ---
 
