@@ -83,7 +83,29 @@ Run the following command to install all required dependencies:
 npm install
 ```
 
-### Step 4: Configure the Bot
+### Step 4: Install TypeScript
+
+1. Ensure TypeScript is installed globally by running:
+   ```
+   tsc --version
+   ```
+2. If TypeScript is not recognized, install it globally:
+   ```
+   npm install -g typescript
+   ```
+3. Verify the installation by running:
+   ```
+   tsc --version
+   ```
+
+### Step 5: Compile the Bot
+
+Compile the TypeScript code into JavaScript to generate the `dist` folder:
+```
+tsc
+```
+
+### Step 6: Configure the Bot
 
 1. Open `config.ts` in a text editor.
 2. Update the following parameters:
@@ -96,7 +118,7 @@ npm install
    - `LIMIT_ORDER`: Set Take Profit as a multiplier (e.g., `1.25` for 25% profit, but typically follows the target wallet's actions).
    - `SLIPPAGE`: Input slippage tolerance for trades (default value: `5`).
 
-### Step 5: Start the Bot
+### Step 7: Start the Bot
 
 Run the bot using:
 ```bash
