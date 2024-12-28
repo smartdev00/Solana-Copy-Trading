@@ -83,7 +83,20 @@ Run the following command to install all required dependencies:
 npm install
 ```
 
-### Step 4: Install TypeScript
+### Step 4: Configure the Bot
+
+1. Open `config.ts` in a text editor.
+2. Update the following parameters:
+   - `TARGET_WALLET_ADDRESS`: Public key of the wallet to copy trades from.
+   - `RAYDIUM_LIQUIDITYPOOL_V4`: Static variable defining the liquidity pool (default: `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8`).
+   - `SOL_ADDRESS`: Static variable defining the wrapped Solana token address (default: `So11111111111111111111111111111111111111112`).
+   - `WALLET`: Replace with your private key (base58-encoded).
+   - `TRADE_AMOUNT`: Amount of WSOL to use per trade (e.g., `10000000` for 0.01 WSOL).
+   - `COMPUTE_PRICE`: A static variable for internal calculations (default: `100000`).
+   - `LIMIT_ORDER`: Set Take Profit as a multiplier (e.g., `1.25` for 25% profit, but typically follows the target wallet's actions).
+   - `SLIPPAGE`: Input slippage tolerance for trades (default value: `5`).
+
+### Step 5: Install TypeScript
 
 1. Ensure TypeScript is installed globally by running:
    ```
@@ -98,7 +111,7 @@ npm install
    tsc --version
    ```
 
-### Step 5: Compile the Bot
+### Step 6: Compile the Bot
 
 1. Navigate to the bot's main folder where the `tsconfig.json` file is located. For example:
    ```cmd
@@ -109,19 +122,6 @@ npm install
    tsc
    ```
 3. Verify that the `dist` folder is created and contains the compiled `.js` files.
-
-### Step 6: Configure the Bot
-
-1. Open `config.ts` in a text editor.
-2. Update the following parameters:
-   - `TARGET_WALLET_ADDRESS`: Public key of the wallet to copy trades from.
-   - `RAYDIUM_LIQUIDITYPOOL_V4`: Static variable defining the liquidity pool (default: `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8`).
-   - `SOL_ADDRESS`: Static variable defining the wrapped Solana token address (default: `So11111111111111111111111111111111111111112`).
-   - `WALLET`: Replace with your private key (base58-encoded).
-   - `TRADE_AMOUNT`: Amount of WSOL to use per trade (e.g., `10000000` for 0.01 WSOL).
-   - `COMPUTE_PRICE`: A static variable for internal calculations (default: `100000`).
-   - `LIMIT_ORDER`: Set Take Profit as a multiplier (e.g., `1.25` for 25% profit, but typically follows the target wallet's actions).
-   - `SLIPPAGE`: Input slippage tolerance for trades (default value: `5`).
 
 ### Step 7: Start the Bot
 
