@@ -86,7 +86,26 @@ npm install
 ### Step 4: Configure the Bot
 
 1. Open `config.ts` in a text editor.
-2. Update the following parameters:
+2. Add your **Helius API Key**:
+   - Locate the `connection1` and `connection2` settings in the `config.ts` file.
+   - Replace the placeholder API key with your actual Helius API key:
+     ```typescript
+     export const connection1 = new Connection(
+         'https://mainnet.helius-rpc.com/?api-key=your-api-key-here', 
+         {
+             commitment: "confirmed",
+         }
+     );
+
+     export const connection2 = new Connection(
+         'https://mainnet.helius-rpc.com/?api-key=your-api-key-here', 
+         {
+             commitment: "confirmed",
+         }
+     );
+     ```
+   - Replace `your-api-key-here` with your valid Helius API key.
+3. Update the following parameters:
    - `TARGET_WALLET_ADDRESS`: Public key of the wallet to copy trades from.
    - `RAYDIUM_LIQUIDITYPOOL_V4`: Static variable defining the liquidity pool (default: `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8`).
    - `SOL_ADDRESS`: Static variable defining the wrapped Solana token address (default: `So11111111111111111111111111111111111111112`).
