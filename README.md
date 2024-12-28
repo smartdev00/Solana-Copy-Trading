@@ -100,10 +100,15 @@ npm install
 
 ### Step 5: Compile the Bot
 
-Compile the TypeScript code into JavaScript to generate the `dist` folder:
-```
-tsc
-```
+1. Navigate to the bot's main folder where the `tsconfig.json` file is located. For example:
+   ```cmd
+   cd C:\copy-trading-bot
+   ```
+2. Compile the TypeScript code into JavaScript to generate the `dist` folder:
+   ```
+   tsc
+   ```
+3. Verify that the `dist` folder is created and contains the compiled `.js` files.
 
 ### Step 6: Configure the Bot
 
