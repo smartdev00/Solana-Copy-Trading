@@ -218,16 +218,19 @@ Below are screenshots illustrating the bot correctly tracking and copying trades
 2. **Optional Token Liquidity Check**:
    - Implement a feature to evaluate token liquidity during tracked wallet buys and proceed with the trade only if liquidity is sufficient to avoid adverse price impacts.
 
-3. **Minimum Value of Tracked Wallet Trade**:
+3. **Log Reporting**:
+   - Implement the logging of trades and reasons for non-copied trades in CSV format.
+
+4. **Minimum Value of Tracked Wallet Trade**:
    - **Confirmed**: The bot now includes the ability to filter trades based on a configurable minimum trade size (e.g., `TARGET_WALLET_MIN_TRADE`). Trades below this threshold will be ignored, ensuring only "high commitment" trades are copied.
 
-4. **Amount of Token to Sell**:
+5. **Amount of Token to Sell**:
    - **Confirmed**: The bot always sells 100% of tokens held in your wallet when the tracked wallet sells the same token.
 
-5. **Exclude Tokens by Marketplace**:
+6. **Exclude Tokens by Marketplace**:
    - **Confirmed**: The bot only interacts with tokens on Raydium and does not trade tokens from other marketplaces like pump.fun. No further action is needed for this feature.
 
-6. **Optional Stop Loss (SL) Setting for Each Wallet**:
+7. **Optional Stop Loss (SL) Setting for Each Wallet**:
    - Add the ability to specify a Stop Loss percentage for each wallet, triggering an automatic sell if the SL threshold is reached.
    - **Developer response**: "This is impossible because of RPC node server issues. Without our own local node server, we cannot implement subscription-based functions such as a Stop Loss."
 
