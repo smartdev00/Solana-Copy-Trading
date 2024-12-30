@@ -15,6 +15,7 @@ The Solana Copy Trading Bot is an automated trading solution designed to replica
 - **Customizable Trade Parameters**:
   - Define trade size.
   - Set Take Profit (TP) thresholds for trades.
+  - Define a minimum trade size threshold for copying target wallet trades.
 
 - **Transaction Safety**:
   - Only sells tokens if:
@@ -107,6 +108,7 @@ npm install
    - Replace `your-api-key-here` with your valid Helius API key.
 3. Update the following parameters:
    - `TARGET_WALLET_ADDRESS`: Public key of the wallet to copy trades from.
+   - `TARGET_WALLET_MIN_TRADE`: Minimum trade size (in lamports) to copy. Trades below this value are ignored (e.g., 10000000000 for 10 SOL).
    - `RAYDIUM_LIQUIDITYPOOL_V4`: Static variable defining the liquidity pool (default: `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8`).
    - `SOL_ADDRESS`: Static variable defining the wrapped Solana token address (default: `So11111111111111111111111111111111111111112`).
    - `WALLET`: Replace with your private key (base58-encoded).
@@ -158,10 +160,11 @@ npm run start
 | Parameter              | Description                                                                                  |
 |------------------------|----------------------------------------------------------------------------------------------|
 | `TARGET_WALLET_ADDRESS`| The wallet address to monitor for trades.                                                   |
+| `TARGET_WALLET_MIN_TRADE` | Minimum trade size (in lamports) to copy. Trades below this value will be ignored.          |
+| `TRADE_AMOUNT`         | Amount to trade per transaction (in lamports; 1 WSOL = 1,000,000,000 lamports).             |
 | `RAYDIUM_LIQUIDITYPOOL_V4` | Static variable for the Raydium Liquidity Pool.                                             |
 | `SOL_ADDRESS`          | Static variable for the wrapped Solana token address.                                        |
 | `WALLET`               | Your trading wallet’s private key in base58 format.                                         |
-| `TRADE_AMOUNT`         | Amount to trade per transaction (in lamports; 1 WSOL = 1,000,000,000 lamports).             |
 | `COMPUTE_PRICE`        | A static variable for internal calculations (default: `100000`).                            |
 | `LIMIT_ORDER`          | Multiplier for setting Take Profit (TP) above the buy price (e.g., `1.25` for 25% profit).  |
 | `SLIPPAGE`             | Maximum allowable price variation during trade execution (default: `5`).                    |
@@ -212,21 +215,21 @@ Below are screenshots illustrating the bot correctly tracking and copying trades
 1. **Support for Multiple Wallets**:
    - Enable tracking and copying trades from multiple Solana wallets simultaneously.
 
-2. **Minimum Value of Tracked Wallet Trade**:
-   - Implement a feature to copy trades only if the tracked wallet's trade size exceeds a user-defined threshold, ensuring "high commitment" trades.
-
-3. **Optional Token Liquidity Check**:
+2. **Optional Token Liquidity Check**:
    - Implement a feature to evaluate token liquidity during tracked wallet buys and proceed with the trade only if liquidity is sufficient to avoid adverse price impacts.
 
-4. **Optional Stop Loss (SL) Setting for Each Wallet**:
-   - Add the ability to specify a Stop Loss percentage for each wallet, triggering an automatic sell if the SL threshold is reached.
-   - **Developer response**: "This is impossible because of RPC node server issues. Without our own local node server, we cannot implement subscription-based functions such as a Stop Loss."
+3. **Minimum Value of Tracked Wallet Trade**:
+   - **Confirmed**: The bot now includes the ability to filter trades based on a configurable minimum trade size (e.g., `TARGET_WALLET_MIN_TRADE`). Trades below this threshold will be ignored, ensuring only "high commitment" trades are copied.
 
-5. **Amount of Token to Sell**:
+4. **Amount of Token to Sell**:
    - **Confirmed**: The bot always sells 100% of tokens held in your wallet when the tracked wallet sells the same token.
 
-6. **Exclude Tokens by Marketplace**:
+5. **Exclude Tokens by Marketplace**:
    - **Confirmed**: The bot only interacts with tokens on Raydium and does not trade tokens from other marketplaces like pump.fun. No further action is needed for this feature.
+
+6. **Optional Stop Loss (SL) Setting for Each Wallet**:
+   - Add the ability to specify a Stop Loss percentage for each wallet, triggering an automatic sell if the SL threshold is reached.
+   - **Developer response**: "This is impossible because of RPC node server issues. Without our own local node server, we cannot implement subscription-based functions such as a Stop Loss."
 
 ---
 
