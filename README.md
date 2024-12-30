@@ -219,7 +219,7 @@ Below are screenshots illustrating the bot correctly tracking and copying trades
    - Implement a feature to evaluate token liquidity during tracked wallet buys and proceed with the trade only if liquidity is sufficient to avoid adverse price impacts.
 
 3. **Log Reporting**:
-   - Implement the logging of trades and reasons for non-copied trades in CSV format.
+   - **Confirmed**: The bot now logs all trades and reasons for non-copied trades in CSV format. This includes timestamps, actions, wallet addresses, token details, amounts, and explanatory reasons. The log file can be opened in Excel for easy analysis.
 
 4. **Minimum Value of Tracked Wallet Trade**:
    - **Confirmed**: The bot now includes the ability to filter trades based on a configurable minimum trade size (e.g., `TARGET_WALLET_MIN_TRADE`). Trades below this threshold will be ignored, ensuring only "high commitment" trades are copied.
