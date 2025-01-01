@@ -1,3 +1,5 @@
+import fs from 'fs';
+
 import {
   PublicKey,
   TransactionSignature,
@@ -32,11 +34,24 @@ import {
   RAYDIUM_LIQUIDITYPOOL_V4, 
   SOL_ADDRESS,
   TRADE_AMOUNT,
+  TARGET_WALLET_MIN_TRADE,
   COMPUTE_PRICE,
   LIMIT_ORDER,
   SLIPPAGE,
   sleep 
-} from './config'
+} from './config';
+
+// Timestamp in seconds, when the app started
+// Used to prevent copy-trading transactions happened before app launch
+const APP_STARTED_AT_SECONDS = Math.floor(Date.now() / 1000);
+
+// Trade log filename (ensure it is ignored by Git)
+const LOG_FILE = 'trade_log.csv';
+
+// Create log file if not exists and add headers
+if (!fs.existsSync(LOG_FILE)) { 
+  fs.writeFileSync(LOG_FILE, 'Timestamp,Action,Wallet,Token,Amount (SOL),Reason\n'); 
+} 
 
 let signatureList = new Set<TransactionSignature>();
 let signatureCompletedList: TransactionSignature[] = [];
@@ -51,6 +66,9 @@ async function trackTargetWallet() {
 
     for (const signatureInfo of signatures) {
       const { signature, err } = signatureInfo;
+
+      // Do not process signatures happened before the app started
+      if (signatureInfo.blockTime && signatureInfo.blockTime < APP_STARTED_AT_SECONDS) continue;
       
       if (!err && !signatureList.has(signature) && !signatureCompletedList.includes(signature)) {
         signatureList.add(signature);
@@ -60,18 +78,49 @@ async function trackTargetWallet() {
     for (const signature of signatureList) {
       const res = await analyzeSignature(connection1, signature); 
 
-      if(res && res.isBuy && res.mint && res.pool) {
-        console.log(`Target: buy ${res.mint} token on ${res.pool} pool`)
+      if (res && res.isBuy && res.mint && res.pool) {
+        const tradeSize = await getTradeSize(connection1, res.signature);
+
+        // Skip trades below the minimum threshold
+        if (tradeSize < TARGET_WALLET_MIN_TRADE) {
+          logToFile('Skipped', TARGET_WALLET_ADDRESS.toString(), res.mint.toString(), (tradeSize / 1_000_000_000).toString(), 'Below minimum trade size');
+          console.log(`Skipped trade: Value (${tradeSize / 1000000000} SOL) below threshold (${TARGET_WALLET_MIN_TRADE / 1000000000} SOL).`);
+          continue;
+        }
+
+        logToFile('Buy Detected', TARGET_WALLET_ADDRESS.toString(), res.mint.toString(), (tradeSize / 1_000_000_000).toString());
+        console.log(`Target: buy ${res.mint} token on ${res.pool} pool`);
         const buy =  await Buy(connection1, res.mint, res.pool);
         console.log('Buy: ', buy);
 
-        if(buy && buy.mint && buy.poolKeys){
+        if (buy && buy.mint && buy.poolKeys) {
           sellWithLimitOrder(connection2, buy.mint, buy.poolKeys);
         }
       }
     }
   } catch (error) {
     console.error('Error fetching signatures:', error);
+  }
+}
+
+async function getTradeSize(connection: Connection, signature: string): Promise<number> {
+  try {
+    const transactionDetails = await connection.getParsedTransaction(signature, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0
+    });
+
+    const postBalances = transactionDetails?.meta?.postBalances || [];
+    const preBalances = transactionDetails?.meta?.preBalances || [];
+
+    if (postBalances.length > 0 && preBalances.length > 0) {
+      const tradeSize = Math.abs(postBalances[0] - preBalances[0]); // Difference in balances
+      return tradeSize;
+    }
+    return 0;
+  } catch (error) {
+    console.error('Error fetching trade size:', error);
+    return 0;
   }
 }
 
@@ -139,6 +188,7 @@ async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
   try {
     console.log('Buy start');
     if(buyTokenList.includes(mint)) {
+      logToFile('Skipped', WALLET.publicKey.toString(), mint.toString(), (TRADE_AMOUNT / 1_000_000_000).toString(), 'Token already purchased'); 
       console.log('Token: already purchased this token!');
       return;
     };
@@ -184,6 +234,7 @@ async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
       );
 
       if(confirmStatus.value.err == null) {
+        logToFile('Bot Buy', WALLET.publicKey.toString(), mint.toString(), (TRADE_AMOUNT / 1_000_000_000).toString());
         buyTokenList.push(mint);
         console.log(`Buy: buy token - ${res}`);
         return {mint: mint, poolKeys: poolKeys}
@@ -192,6 +243,7 @@ async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
       }      
     }
   } catch (error) {
+    logToFile('Error', WALLET.publicKey.toString(), mint?.toString() ||  'Unknown', '0', "Error: buy on raydium");
     console.log("Error: buy on raydium", error);
     return null;
   }
@@ -231,7 +283,8 @@ async function sellWithLimitOrder( connection: Connection, mint: PublicKey, pool
           baseReserve,
           solReserve
         );
-        if ( expectedSolAmount > BigInt(targetProfit) ) {
+        if ( expectedSolAmount > BigInt(targetProfit) ) {           
+          logToFile('Bot Sell', WALLET.publicKey.toString(), mint.toString(), (tokenBalance / BigInt(1000000000)).toString());
           console.log("Sell: detect profitable moment");
           const sellRes = await sellAllToken(
             connection,
@@ -411,4 +464,11 @@ async function getSwapTokenGivenInInstructions (
   ];
 };
 
-setInterval(trackTargetWallet, 400);
+// Performs logging to file
+function logToFile(action: string, wallet: string, token: string, amount: string, reason = '') { 
+  const timestamp = new Date().toISOString(); 
+  const logEntry =  `${timestamp},${action},${wallet},${token},${amount},${reason}\n`; 
+  fs.appendFileSync(LOG_FILE, logEntry); 
+} 
+
+setInterval(trackTargetWallet, 5000);
