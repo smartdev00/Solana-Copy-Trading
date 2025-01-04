@@ -229,13 +229,16 @@ Below are screenshots illustrating the bot correctly tracking and copying trades
 
 ## Future Improvements
 
-1. **Support for Multiple Wallets**:
+1. **Masking Bot Trades from Target Wallet**:
+   - Consider advanced strategies for "front-running mitigation" or "transaction privacy," that can help obfuscate or disguise the activities of our bot (refer to Solana-Copy-Trading-Bot-Masking-Trades.pdf) for concepts.
+
+2. **Support for Multiple Wallets**:
    - Enable tracking and copying trades from multiple Solana wallets simultaneously.
 
-2. **Optional Token Liquidity Check**:
+3. **Optional Token Liquidity Check**:
    - Implement a feature to evaluate token liquidity during tracked wallet buys and proceed with the trade only if liquidity is sufficient to avoid adverse price impacts.
 
-3. **Optional Stop Loss (SL) Setting for Each Wallet**:
+4. **Optional Stop Loss (SL) Setting for Each Wallet**:
    - Add the ability to specify a Stop Loss percentage for each wallet, triggering an automatic sell if the SL threshold is reached.
    - **Developer response**: "This is impossible because of RPC node server issues. Without our own local node server, we cannot implement subscription-based functions such as a Stop Loss."
 
