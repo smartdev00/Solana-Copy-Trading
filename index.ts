@@ -1,8 +1,9 @@
 import fs from 'fs';
 
+import beeper from 'beeper';
+
 import {
   PublicKey,
-  TransactionSignature,
   ParsedInstruction,
   TransactionInstruction,
   ComputeBudgetProgram,
@@ -39,13 +40,27 @@ import {
   LIMIT_ORDER,
   SLIPPAGE,
   sleep 
-} from './config';
+} from './config.js';
 
-// Timestamp in seconds, when the app started
-// Used to prevent copy-trading transactions happened before app launch
-const APP_STARTED_AT_SECONDS = Math.floor(Date.now() / 1000);
+// Confirm the bot started working
+console.info('Gamesoft Interactive, 2025');
+console.info('Copy trading bot for Solana.');
+console.info('Target wallet address', process.env.TARGET_WALLET_ADDRESS);
 
-// Trade log filename (ensure it is ignored by Git)
+/*
+ * Stores timestamp of last processed transaction
+ * Used to prevent processing already processed transactions
+ * Initialize with current timestamp in order to prevent processing transactions
+ * created before app launch
+ */
+
+let latestTransactionTimestamp = Math.floor(Date.now() / 1000);
+
+/*
+ * Trade log filename (ensure it is ignored by Git)
+ * TODO: Specify through configuration file
+ */
+
 const LOG_FILE = 'trade_log.csv';
 
 // Create log file if not exists and add headers
@@ -53,39 +68,59 @@ if (!fs.existsSync(LOG_FILE)) {
   fs.writeFileSync(LOG_FILE, 'Timestamp,Action,Wallet,Token,Amount (SOL),Reason\n'); 
 } 
 
-let signatureList = new Set<TransactionSignature>();
-let signatureCompletedList: TransactionSignature[] = [];
-const SIGNATURE_COMPLETED_LIST_LIMIT = 20;
 let buyTokenList: PublicKey[] = [];
 
+/*
+ * Primary function invoked by main loop and calling all subsequent functions during its work
+ */
+
 async function trackTargetWallet() {
-  try {
-    const signatures = await connection1.getSignaturesForAddress(TARGET_WALLET_ADDRESS, {
-      limit: 5,
-    });
 
-    for (const signatureInfo of signatures) {
-      const { signature, err } = signatureInfo;
+    let signatures;
 
-      // Do not process signatures happened before the app started
-      if (signatureInfo.blockTime && signatureInfo.blockTime < APP_STARTED_AT_SECONDS) continue;
-      
-      if (!err && !signatureList.has(signature) && !signatureCompletedList.includes(signature)) {
-        signatureList.add(signature);
-      }
+    try {
+        signatures = await connection1.getSignaturesForAddress(TARGET_WALLET_ADDRESS, {limit: 5});
+    } catch (error: any) {
+        console.error('Error fetching signatures:', error.cause);
+        return;
     }
 
-    for (const signature of signatureList) {
-      const res = await analyzeSignature(connection1, signature); 
+    for (const signatureInfo of signatures) {
+        // Send for processing only unprocessed transactions
+        if (signatureInfo.blockTime && signatureInfo.blockTime > latestTransactionTimestamp) {
+            latestTransactionTimestamp = signatureInfo.blockTime;
+            await processSignature(signatureInfo);
+        }
+    }
+}
 
-      if (res && res.isBuy && res.mint && res.pool) {
+/*
+ * Process specific transaction
+ */
+
+async function processSignature(signatureInfo: any) {
+
+    console.info('');
+    console.log('Transaction detected:');
+    console.log('Signature:', signatureInfo.signature);
+    console.info('Timestamp:', signatureInfo.blockTime && new Date(signatureInfo.blockTime * 1000).toLocaleString() || 'None');
+
+    await beeper();
+
+    const { signature, err } = signatureInfo;
+     
+    if (err) return;
+
+    const res = await analyzeSignature(connection1, signature);
+
+    if (res && res.isBuy && res.mint && res.pool) {
         const tradeSize = await getTradeSize(connection1, res.signature);
 
         // Skip trades below the minimum threshold
         if (tradeSize < TARGET_WALLET_MIN_TRADE) {
-          logToFile('Skipped', TARGET_WALLET_ADDRESS.toString(), res.mint.toString(), (tradeSize / 1_000_000_000).toString(), 'Below minimum trade size');
-          console.log(`Skipped trade: Value (${tradeSize / 1000000000} SOL) below threshold (${TARGET_WALLET_MIN_TRADE / 1000000000} SOL).`);
-          continue;
+            logToFile('Skipped', TARGET_WALLET_ADDRESS.toString(), res.mint.toString(), (tradeSize / 1_000_000_000).toString(), 'Below minimum trade size');
+            console.log(`Skipped trade: Value (${tradeSize / 1000000000} SOL) below threshold (${TARGET_WALLET_MIN_TRADE / 1000000000} SOL).`);
+            return;
         }
 
         logToFile('Buy Detected', TARGET_WALLET_ADDRESS.toString(), res.mint.toString(), (tradeSize / 1_000_000_000).toString());
@@ -94,13 +129,11 @@ async function trackTargetWallet() {
         console.log('Buy: ', buy);
 
         if (buy && buy.mint && buy.poolKeys) {
-          sellWithLimitOrder(connection2, buy.mint, buy.poolKeys);
+            sellWithLimitOrder(connection2, buy.mint, buy.poolKeys);
         }
-      }
+    } else {
+        console.info('Not a trading transaction.');
     }
-  } catch (error) {
-    console.error('Error fetching signatures:', error);
-  }
 }
 
 async function getTradeSize(connection: Connection, signature: string): Promise<number> {
@@ -124,16 +157,7 @@ async function getTradeSize(connection: Connection, signature: string): Promise<
   }
 }
 
-function addToCompletedList(signature: TransactionSignature) {
-  if (signatureCompletedList.length >= SIGNATURE_COMPLETED_LIST_LIMIT) {
-    signatureCompletedList.shift(); // Remove oldest signature if limit is exceeded
-  }
-  signatureCompletedList.push(signature);
-}
-
 async function analyzeSignature(connection: Connection, signature: string) {
-  signatureList.delete(signature);
-  addToCompletedList(signature);   
   try {
     const transactionDetails = await connection.getParsedTransaction(signature, {
       commitment: "confirmed",
@@ -142,7 +166,7 @@ async function analyzeSignature(connection: Connection, signature: string) {
     let isBuy = true;
     let mintAddress: PublicKey | undefined;
     let poolAddress: PublicKey | undefined;
-    console.log(`Analyze: ${signature}`);
+    
     if (transactionDetails?.meta?.logMessages) {
       const logs = transactionDetails.meta.logMessages;          
       const isRaydiumLog = logs.some(log =>
