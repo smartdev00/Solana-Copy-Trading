@@ -129,7 +129,7 @@ async function processTransaction(signatureInfo: any) {
 
     const res = await analyzeSignature(connection1, signature);
 
-    console.info('res', res);
+    //console.info('res', res);
 
     if (res && res.isBuy && res.mint && res.pool) {
 
