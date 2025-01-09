@@ -1,8 +1,7 @@
 {
-  "name": "solanacopytrading",
+  "name": "solana-copy-trading-bot",
   "version": "1.0.0",
   "main": "index.js",
-  "type": "module",
   "scripts": {
     "start": "node dist/index.js",
     "build": "tsc",
@@ -13,14 +12,17 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
-    "typescript": "^5.6.3"
+    "@types/node": "^22.10.5",
+    "@types/play-sound": "^1.1.2",
+    "@types/sound-play": "^1.1.3",
+    "typescript": "^5.7.3"
   },
   "dependencies": {
     "@raydium-io/raydium-sdk": "^1.3.1-beta.58",
     "@solana/spl-token": "^0.4.9",
-    "@solana/web3.js": "^1.95.4",
-    "beeper": "^3.0.0",
+    "@solana/web3.js": "^1.98.0",
     "bs58": "^6.0.0",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.7",
+    "sound-play": "^1.1.0"
   }
 }

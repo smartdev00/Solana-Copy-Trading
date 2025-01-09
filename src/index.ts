@@ -1,6 +1,15 @@
 import fs from 'fs';
+import path from 'path'; 
 
-import beeper from 'beeper';
+import sound from 'sound-play';
+
+const soundFilePaths = {
+    botStart: path.join(__dirname, "../sounds/bot-start.mp3"),
+    buyTrade: path.join(__dirname, "../sounds/bot-buy-trade.mp3"),
+    buyTradeCopied: path.join(__dirname, "../sounds/bot-buy-trade-copied.mp3"),
+    sellTrade: path.join(__dirname, "../sounds/bot-sell-trade.mp3"),
+    sellTradeCopied: path.join(__dirname, "../sounds/bot-sell-trade-copied.mp3")
+}
 
 import {
   PublicKey,
@@ -46,6 +55,8 @@ import {
 console.info('Gamesoft Interactive, 2025');
 console.info('Copy trading bot for Solana.');
 console.info('Target wallet address', process.env.TARGET_WALLET_ADDRESS);
+
+sound.play(soundFilePaths.botStart);
 
 /*
  * Stores timestamp when the app started
@@ -135,23 +146,24 @@ async function processTransaction(signatureInfo: any) {
 
         console.info('\x1b[32m', 'Swap transaction', '\x1b[0m');
 
-        await beeper();
-
         const tradeSize = await getTradeSize(connection1, res.signature);
 
         // Skip trades below the minimum threshold
         if (tradeSize < TARGET_WALLET_MIN_TRADE) {
             logToFile('Skipped', TARGET_WALLET_ADDRESS.toString(), res.mint.toString(), (tradeSize / 1_000_000_000).toString(), 'Below minimum trade size');
             console.log(`Skipped trade: Value (${tradeSize / 1000000000} SOL) below threshold (${TARGET_WALLET_MIN_TRADE / 1000000000} SOL).`);
+            sound.play(soundFilePaths.buyTrade);
             return;
         }
 
         logToFile('Buy Detected', TARGET_WALLET_ADDRESS.toString(), res.mint.toString(), (tradeSize / 1_000_000_000).toString());
         console.log(`Target: buy ${res.mint} token on ${res.pool} pool`);
+        sound.play(soundFilePaths.buyTradeCopied);
         const buy =  await Buy(connection1, res.mint, res.pool);
         console.log('Buy: ', buy);
 
         if (buy && buy.mint && buy.poolKeys) {
+            sound.play(soundFilePaths.sellTrade);
             sellWithLimitOrder(connection2, buy.mint, buy.poolKeys);
         }
     } else {
@@ -309,8 +321,7 @@ async function sellWithLimitOrder( connection: Connection, mint: PublicKey, pool
   let tokenBalanceString: string;
   const targetProfit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER);
   const targetLoss = Math.floor(TRADE_AMOUNT / 2);
-  const isCorrectOrder =
-    poolKeys.baseMint.toString() === mint.toString() ? true : false;
+  const isCorrectOrder = poolKeys.baseMint.toString() === mint.toString() ? true : false;
   const baseVault = isCorrectOrder ? poolKeys.baseVault : poolKeys.quoteVault;
   const quoteVault = isCorrectOrder ? poolKeys.quoteVault : poolKeys.baseVault;
   const mintATA = getAssociatedTokenAddressSync(mint, WALLET.publicKey);
