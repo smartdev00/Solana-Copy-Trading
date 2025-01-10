@@ -27,7 +27,7 @@ The Solana Copy Trading Bot is an automated trading solution designed to replica
   - Integrates with Raydium Liquidity Pool for token swaps (does not trade on riskier marketplaces such as pump.fun).
 
 - **Ease of Use**:
-  - Configuration via a single `config.ts` file.
+  - Configuration via `.env`' and `config.ts` files.
   - Human-readable JSON logs for tracking trades.
 
 - **Utilises Wrapped Solana (WSOL)**:
@@ -165,13 +165,6 @@ The bot's configuration follows this flow:
    ```
    Waiting to copy trade wallet ...PNAQ3
    ```
-
-### Step 7: Start the Bot
-
-Run the bot using:
-```bash
-npm run start
-```
 
 ---
 
