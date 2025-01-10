@@ -30,7 +30,7 @@ The Solana Copy Trading Bot is an automated trading solution designed to replica
   - Configuration via a single `config.ts` file.
   - Human-readable JSON logs for tracking trades.
 
-- **Requires Wrapped Solana (WSOL)**:
+- **Utilises Wrapped Solana (WSOL)**:
   - The bot uses WSOL for all trading activities. Ensure your wallet has sufficient WSOL before running the bot.
   - Refer to the [Copy Trading - Prepare Wallet with WSOL](copy-trading-get-wsol.pdf) guide for detailed steps to prepare your wallet.
 
@@ -78,6 +78,28 @@ To run the Solana Copy Trading Bot, ensure you have the following:
    cd copy-trading-bot
    ```
 
+After cloning the repository, the folder structure will look like this:
+
+```plaintext
+copy-trading-bot/
+├── src/
+│   ├── config.ts
+│   ├── index.ts
+├── sounds/
+│   ├── bot-start.wav
+│   ├── bot-error.wav
+│   ├── bot-buy-trade.wav
+│   ├── bot-buy-trade-copied.wav
+│   ├── bot-sell-trade.wav
+│   ├── bot-sell-trade-copied.wav
+├── .env.sample
+├── README.md
+├── tsconfig.json
+├── package.json
+├── package-lock.json
+├── .gitignore
+```
+
 ### Step 3: Install Dependencies
 
 Run the following command to install all required dependencies:
@@ -87,32 +109,26 @@ npm install
 
 ### Step 4: Configure the Bot
 
-1. Open `config.ts` in a text editor.
-2. Add your **Helius API Key**:
-   - Locate the `connection1` and `connection2` settings in the `config.ts` file.
-   - Replace the placeholder API key with your actual Helius API key:
-     ```typescript
-     export const connection1 = new Connection(
-         'https://mainnet.helius-rpc.com/?api-key=your-api-key-here', 
-         {
-             commitment: "confirmed",
-         }
-     );
+The bot's configuration follows this flow:
+- `.env`: Contains sensitive and private information such as API keys, target wallet address, and wallet private key. This file is stored locally and not shared on GitHub.
+- `config.ts`: Reads values from `.env` and defines parameters for the bot. This file references `.env` variables for sensitive data, ensuring security.
+- `index.ts`: Main bot logic file that uses parameters defined in `config.ts` to perform trading actions.
 
-     export const connection2 = new Connection(
-         'https://mainnet.helius-rpc.com/?api-key=your-api-key-here', 
-         {
-             commitment: "confirmed",
-         }
-     );
-     ```
-   - Replace `your-api-key-here` with your valid Helius API key.
-3. Update the following parameters:
+1. Copy `.env.sample` to `.env`:
+   ```bash
+   cp .env.sample .env
+   ```
+
+2. Open `.env` and fill in the required details:
+   - `CONNECTION_URL_1`: Replace the placeholder API key with your actual Helius API key.
+   - `CONNECTION_URL_2`: Replace the placeholder API key with your actual Helius API key.
    - `TARGET_WALLET_ADDRESS`: Public key of the wallet to copy trades from.
+   - `WALLET_PRIVATE_KEY`: Replace with your private key (base58-encoded).
+
+3. Adjust parameters in `config.ts` as needed.
    - `TARGET_WALLET_MIN_TRADE`: Minimum trade size (in lamports) to copy. Trades below this value are ignored (e.g., 10000000000 for 10 SOL).
    - `RAYDIUM_LIQUIDITYPOOL_V4`: Static variable defining the liquidity pool (default: `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8`).
    - `SOL_ADDRESS`: Static variable defining the wrapped Solana token address (default: `So11111111111111111111111111111111111111112`).
-   - `WALLET`: Replace with your private key (base58-encoded).
    - `TRADE_AMOUNT`: Amount of WSOL to use per trade (e.g., `10000000` for 0.01 WSOL).
    - `COMPUTE_PRICE`: A static variable for internal calculations (default: `100000`).
    - `LIMIT_ORDER`: Set Take Profit as a multiplier (e.g., `1.25` for 25% profit, but typically follows the target wallet's actions).
@@ -133,17 +149,22 @@ npm install
    tsc --version
    ```
 
-### Step 6: Compile the Bot
+### Step 6: Running the Bot
 
-1. Navigate to the bot's main folder where the `tsconfig.json` file is located. For example:
-   ```cmd
-   cd C:\copy-trading-bot
+1. Build the project:
+   ```bash
+   npm run build
    ```
-2. Compile the TypeScript code into JavaScript to generate the `dist` folder:
+
+2. Start the bot:
+   ```bash
+   npm run start
    ```
-   tsc
+
+3. You should see a message similar to:
    ```
-3. Verify that the `dist` folder is created and contains the compiled `.js` files.
+   Waiting to copy trade wallet ...PNAQ3
+   ```
 
 ### Step 7: Start the Bot
 
@@ -172,20 +193,6 @@ npm run start
 
 ---
 
-## Usage
-
-1. Ensure the bot is running by executing:
-   ```bash
-   npm run start
-   ```
-2. Monitor the console for real-time logs of:
-   - Tokens bought and sold.
-   - Current holdings and performance.
-
-3. Edit `config.ts` to adjust trade parameters and restart the bot if changes are made.
-
----
-
 ## Troubleshooting
 
 | Issue                                     | Solution                                                                              |
@@ -211,7 +218,7 @@ Below are screenshots illustrating the bot correctly tracking and copying trades
 
 ---
 
-## Recent Improvements (Updated January 01, 2025)
+## Recent Improvements (Updated January 10, 2025)
 
 1. **Minimum Value of Target Wallet Trade**:
    - The bot now includes the ability to filter trades based on a configurable minimum trade size (e.g., `TARGET_WALLET_MIN_TRADE`). Trades below this threshold will be ignored, ensuring only "high commitment" trades are copied.
@@ -224,6 +231,9 @@ Below are screenshots illustrating the bot correctly tracking and copying trades
   
 4. **Log Reporting**:
    - The bot now logs all trades and reasons for non-copied trades in CSV format. This includes timestamps, actions, wallet addresses, token details, amounts, and explanatory reasons. The log file can be opened in Excel for easy analysis.
+
+5. **Sound Alerts**:
+  - Audio notifications added for significant events (e.g., bot start, trades detected, errors).
 
 ---
 
