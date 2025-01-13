@@ -27,10 +27,10 @@ The Solana Copy Trading Bot is an automated trading solution designed to replica
   - Integrates with Raydium Liquidity Pool for token swaps (does not trade on riskier marketplaces such as pump.fun).
 
 - **Ease of Use**:
-  - Configuration via a single `config.ts` file.
+  - Configuration via `.env` and `config.ts` files.
   - Human-readable JSON logs for tracking trades.
 
-- **Requires Wrapped Solana (WSOL)**:
+- **Utilises Wrapped Solana (WSOL)**:
   - The bot uses WSOL for all trading activities. Ensure your wallet has sufficient WSOL before running the bot.
   - Refer to the [Copy Trading - Prepare Wallet with WSOL](copy-trading-get-wsol.pdf) guide for detailed steps to prepare your wallet.
 
@@ -78,6 +78,28 @@ To run the Solana Copy Trading Bot, ensure you have the following:
    cd copy-trading-bot
    ```
 
+After cloning the repository, the folder structure will look like this:
+
+```plaintext
+copy-trading-bot/
+├── src/
+│   ├── config.ts
+│   ├── index.ts
+├── sounds/
+│   ├── bot-start.wav
+│   ├── bot-error.wav
+│   ├── bot-buy-trade.wav
+│   ├── bot-buy-trade-copied.wav
+│   ├── bot-sell-trade.wav
+│   ├── bot-sell-trade-copied.wav
+├── .env.sample
+├── README.md
+├── tsconfig.json
+├── package.json
+├── package-lock.json
+├── .gitignore
+```
+
 ### Step 3: Install Dependencies
 
 Run the following command to install all required dependencies:
@@ -87,22 +109,21 @@ npm install
 
 ### Step 4: Configure the Bot
 
-1. Open `.env.sample` in a text editor and save it to a file with another name, e. g. `.env` or `my_config.env` or any other name you like.
-2. Add your **Helius API Key**:
-   - Locate the `CONNECTION_URL_1` and `CONNECTION_URL_2` settings in the `.env` file.
-   - Replace the placeholder API key with your actual Helius API key:
-      `CONNECTION_URL_1 = https://mainnet.helius-rpc.com/?api-key=<YOUT_API_KEY>`
-      `CONNECTION_URL_2 = https://mainnet.helius-rpc.com/?api-key=<YOUT_API_KEY>`
-3. Update the following parameters:
+1. Copy `.env.sample` to a file with another name and extension `.env`, e. g. `.env` or `my_config.env` or any other name you like (`my_config.env` is used throughout of this guide).
+Extension `.env` ensures this file will not be tracked by Git according to `.gitignore` file rules.
+   ```bash
+   cp .env.sample my_config.env
+   ```
+2. Open `my_config.env` and fill in the required details:
+   - `CONNECTION_URL_1`: Replace the placeholder API key with your actual Helius API key.
+   - `CONNECTION_URL_2`: Replace the placeholder API key with your actual Helius API key.
    - `TARGET_WALLET_ADDRESS`: Public key of the wallet to copy trades from.
-   - `TARGET_WALLET_MIN_TRADE`: Minimum trade size (in lamports) to copy. Trades below this value are ignored (e.g., 10000000000 for 10 SOL).
-   - `RAYDIUM_LIQUIDITYPOOL_V4`: Static variable defining the liquidity pool (default: `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8`).
-   - `SOL_ADDRESS`: Static variable defining the wrapped Solana token address (default: `So11111111111111111111111111111111111111112`).
    - `WALLET_PRIVATE_KEY`: Replace with your private key (base58-encoded).
-   - `TRADE_AMOUNT`: Amount of WSOL to use per trade (e.g., `10000000` for 0.01 WSOL).
-   - `COMPUTE_PRICE`: A static variable for internal calculations (default: `100000`).
-   - `LIMIT_ORDER`: Set Take Profit as a multiplier (e.g., `1.25` for 25% profit, but typically follows the target wallet's actions).
-   - `SLIPPAGE`: Input slippage tolerance for trades (default value: `5`).
+   - `TRADE_AMOUNT`: Replace with your desired amount of individual trade, in lamports.
+
+The bot's configuration follows this flow:
+- `my_config.env`: Contains sensitive and private information such as API keys, target wallet address, and wallet private key. This file is stored locally and not shared on GitHub.
+- `index.ts`: Main bot logic file that uses parameters defined in `my_config.env` to perform trading actions.
 
 ### Step 5: Install TypeScript
 
@@ -119,29 +140,24 @@ npm install
    tsc --version
    ```
 
-### Step 6: Compile the Bot
+### Step 6: Running the Bot
 
-1. Navigate to the bot's main folder where the `tsconfig.json` file is located. For example:
-   ```cmd
-   cd C:\copy-trading-bot
-   ```
-2. Compile the TypeScript code into JavaScript to generate the `dist` folder and compile `.js` files:
+1. Build the project: compile the TypeScript code into JavaScript to generate the `dist` folder and compiled `.js` files:
    ```
    npm run build
    ```
-3. Verify that the `dist` folder is created and contains the compiled `.js` files.
+2. Verify that the `dist` folder is created and contains the compiled `.js` files.
 
-### Step 7: Start the Bot
-
-Run the bot specifying path to your configuration file `.env` or `my_config.env` or whatever name you have chosen at step 4.1.
+2. Run the bot specifying path to your configuration file `my_config.env` (or whatever name you have chosen at step 4.1).
 Note that the bot is running in its own `dist` folder, therefore you need to specify that configuration file is located in parent folder using `..` notation:
-```bash
-npm run start ../.env
-```
-or
 ```bash
 npm run start ../my_config.env
 ```
+
+3. You should see a message similar to:
+   ```
+   Waiting to copy trade wallet ...PNAQ3
+   ```
 
 ---
 
@@ -202,7 +218,7 @@ Below are screenshots illustrating the bot correctly tracking and copying trades
 
 ---
 
-## Recent Improvements (Updated January 01, 2025)
+## Recent Improvements (Updated January 10, 2025)
 
 1. **Minimum Value of Target Wallet Trade**:
    - The bot now includes the ability to filter trades based on a configurable minimum trade size (e.g., `TARGET_WALLET_MIN_TRADE`). Trades below this threshold will be ignored, ensuring only "high commitment" trades are copied.
@@ -215,6 +231,9 @@ Below are screenshots illustrating the bot correctly tracking and copying trades
   
 4. **Log Reporting**:
    - The bot now logs all trades and reasons for non-copied trades in CSV format. This includes timestamps, actions, wallet addresses, token details, amounts, and explanatory reasons. The log file can be opened in Excel for easy analysis.
+
+5. **Sound Alerts**:
+  - Audio notifications added for significant events (e.g., bot start, trades detected, errors).
 
 ---
 
