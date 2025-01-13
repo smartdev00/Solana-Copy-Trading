@@ -87,32 +87,18 @@ npm install
 
 ### Step 4: Configure the Bot
 
-1. Open `config.ts` in a text editor.
+1. Open `.env.sample` in a text editor and save it to a file with another name, e. g. `.env` or `my_config.env` or any other name you like.
 2. Add your **Helius API Key**:
-   - Locate the `connection1` and `connection2` settings in the `config.ts` file.
+   - Locate the `CONNECTION_URL_1` and `CONNECTION_URL_2` settings in the `.env` file.
    - Replace the placeholder API key with your actual Helius API key:
-     ```typescript
-     export const connection1 = new Connection(
-         'https://mainnet.helius-rpc.com/?api-key=your-api-key-here', 
-         {
-             commitment: "confirmed",
-         }
-     );
-
-     export const connection2 = new Connection(
-         'https://mainnet.helius-rpc.com/?api-key=your-api-key-here', 
-         {
-             commitment: "confirmed",
-         }
-     );
-     ```
-   - Replace `your-api-key-here` with your valid Helius API key.
+      `CONNECTION_URL_1 = https://mainnet.helius-rpc.com/?api-key=<YOUT_API_KEY>`
+      `CONNECTION_URL_2 = https://mainnet.helius-rpc.com/?api-key=<YOUT_API_KEY>`
 3. Update the following parameters:
    - `TARGET_WALLET_ADDRESS`: Public key of the wallet to copy trades from.
    - `TARGET_WALLET_MIN_TRADE`: Minimum trade size (in lamports) to copy. Trades below this value are ignored (e.g., 10000000000 for 10 SOL).
    - `RAYDIUM_LIQUIDITYPOOL_V4`: Static variable defining the liquidity pool (default: `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8`).
    - `SOL_ADDRESS`: Static variable defining the wrapped Solana token address (default: `So11111111111111111111111111111111111111112`).
-   - `WALLET`: Replace with your private key (base58-encoded).
+   - `WALLET_PRIVATE_KEY`: Replace with your private key (base58-encoded).
    - `TRADE_AMOUNT`: Amount of WSOL to use per trade (e.g., `10000000` for 0.01 WSOL).
    - `COMPUTE_PRICE`: A static variable for internal calculations (default: `100000`).
    - `LIMIT_ORDER`: Set Take Profit as a multiplier (e.g., `1.25` for 25% profit, but typically follows the target wallet's actions).
@@ -139,24 +125,29 @@ npm install
    ```cmd
    cd C:\copy-trading-bot
    ```
-2. Compile the TypeScript code into JavaScript to generate the `dist` folder:
+2. Compile the TypeScript code into JavaScript to generate the `dist` folder and compile `.js` files:
    ```
-   tsc
+   npm run build
    ```
 3. Verify that the `dist` folder is created and contains the compiled `.js` files.
 
 ### Step 7: Start the Bot
 
-Run the bot using:
+Run the bot specifying path to your configuration file `.env` or `my_config.env` or whatever name you have chosen at step 4.1.
+Note that the bot is running in its own `dist` folder, therefore you need to specify that configuration file is located in parent folder using `..` notation:
 ```bash
-npm run start
+npm run start ../.env
+```
+or
+```bash
+npm run start ../my_config.env
 ```
 
 ---
 
 ## Configuration Guide
 
-### Key Parameters in `config.ts`
+### Key Parameters in `.env.sample`
 
 | Parameter              | Description                                                                                  |
 |------------------------|----------------------------------------------------------------------------------------------|
@@ -176,13 +167,13 @@ npm run start
 
 1. Ensure the bot is running by executing:
    ```bash
-   npm run start
+   npm run start ../my_config.env
    ```
 2. Monitor the console for real-time logs of:
    - Tokens bought and sold.
    - Current holdings and performance.
 
-3. Edit `config.ts` to adjust trade parameters and restart the bot if changes are made.
+3. Edit `my_config.env` to adjust trade parameters and restart the bot if changes are made.
 
 ---
 

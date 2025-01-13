@@ -1,17 +1,11 @@
+import dotenv from "dotenv";
+import path from 'path';
 import fs from 'fs';
-import path from 'path'; 
-
 import sound from 'sound-play';
-
-const soundFilePaths = {
-    botStart: path.join(__dirname, "../sounds/bot-start.mp3"),
-    buyTrade: path.join(__dirname, "../sounds/bot-buy-trade.mp3"),
-    buyTradeCopied: path.join(__dirname, "../sounds/bot-buy-trade-copied.mp3"),
-    sellTrade: path.join(__dirname, "../sounds/bot-sell-trade.mp3"),
-    sellTradeCopied: path.join(__dirname, "../sounds/bot-sell-trade-copied.mp3")
-}
+import bs58 from 'bs58';
 
 import {
+  Keypair,
   PublicKey,
   ParsedInstruction,
   TransactionInstruction,
@@ -20,6 +14,49 @@ import {
   VersionedTransaction,
   Connection,
 } from '@solana/web3.js';
+
+// Process command-line arguments
+// The app requires strictly one command-line argument which must be a path to configuration file
+// For example `npm run start config.env`
+
+if (process.argv.length !== 3) {
+  console.error('Error launching app:');
+  console.error('Application requires exactly one command-line parameter which must be a path to configuration file.');
+  console.error('For example `npm run start config.env`');
+  process.exit();
+}
+
+// Check configuration file and initialize environment variables
+
+const pathToConfigurationFile = path.join(__dirname, process.argv[2]);
+if (!fs.existsSync(pathToConfigurationFile)) {
+  console.error('Error launching app:');
+  console.error(`Configuration file ${pathToConfigurationFile} not found.`);
+  process.exit();
+}
+dotenv.config({ path: pathToConfigurationFile });
+
+// Initialize parameters from environment variables
+
+const connection1 = new Connection(process.env.CONNECTION_URL_1 || "",  {commitment: "confirmed"});
+const connection2 = new Connection(process.env.CONNECTION_URL_2 || "", {commitment: "confirmed"});
+const TARGET_WALLET_ADDRESS = new PublicKey(process.env.TARGET_WALLET_ADDRESS || "");
+const TARGET_WALLET_MIN_TRADE = parseInt(process.env.TARGET_WALLET_MIN_TRADE || "0");
+const RAYDIUM_LIQUIDITYPOOL_V4 = new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8');
+const SOL_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112');
+const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY || ""));
+const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || "0");
+const COMPUTE_PRICE = 100000;
+const LIMIT_ORDER = 1.25;
+const SLIPPAGE = 5;
+
+const soundFilePaths = {
+    botStart: path.join(__dirname, "../sounds/bot-start.mp3"),
+    buyTrade: path.join(__dirname, "../sounds/bot-buy-trade.mp3"),
+    buyTradeCopied: path.join(__dirname, "../sounds/bot-buy-trade-copied.mp3"),
+    sellTrade: path.join(__dirname, "../sounds/bot-sell-trade.mp3"),
+    sellTradeCopied: path.join(__dirname, "../sounds/bot-sell-trade-copied.mp3")
+}
 
 import { 
   LIQUIDITY_STATE_LAYOUT_V4, 
@@ -36,7 +73,7 @@ import {
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
 
-import { 
+/* import { 
   connection1,
   connection2, 
   WALLET,
@@ -47,16 +84,20 @@ import {
   TARGET_WALLET_MIN_TRADE,
   COMPUTE_PRICE,
   LIMIT_ORDER,
-  SLIPPAGE,
-  sleep 
-} from './config.js';
+  SLIPPAGE
+} from './config.js'; */
+
+const LAMPORTS_IN_SOL = 1_000_000_000;
 
 // Confirm the bot started working
 console.info('Gamesoft Interactive, 2025');
 console.info('Copy trading bot for Solana.');
+console.info('Using configuration file', pathToConfigurationFile);
 console.info('Target wallet address', process.env.TARGET_WALLET_ADDRESS);
+console.info('Target wallet minimal trade size', TARGET_WALLET_MIN_TRADE / LAMPORTS_IN_SOL, 'SOL');
+console.info('Trading amount', TRADE_AMOUNT / LAMPORTS_IN_SOL, 'SOL');
 
-sound.play(soundFilePaths.botStart);
+//sound.play(soundFilePaths.botStart);
 
 /*
  * Stores timestamp when the app started
@@ -144,14 +185,16 @@ async function processTransaction(signatureInfo: any) {
 
     if (res && res.isBuy && res.mint && res.pool) {
 
-        console.info('\x1b[32m', 'Swap transaction', '\x1b[0m');
+        console.info('\x1b[32mSwap transaction\x1b[0m');
+        console.info('Mint:', res.mint.toString());
+        console.info('Pool:', res.pool.toString());
 
         const tradeSize = await getTradeSize(connection1, res.signature);
 
         // Skip trades below the minimum threshold
         if (tradeSize < TARGET_WALLET_MIN_TRADE) {
             logToFile('Skipped', TARGET_WALLET_ADDRESS.toString(), res.mint.toString(), (tradeSize / 1_000_000_000).toString(), 'Below minimum trade size');
-            console.log(`Skipped trade: Value (${tradeSize / 1000000000} SOL) below threshold (${TARGET_WALLET_MIN_TRADE / 1000000000} SOL).`);
+            console.log(`Skipped: Value (${tradeSize / 1000000000} SOL) below threshold (${TARGET_WALLET_MIN_TRADE / 1000000000} SOL).`);
             sound.play(soundFilePaths.buyTrade);
             return;
         }
@@ -235,15 +278,13 @@ async function analyzeSignature(connection: Connection, signature: string) {
             const poolAccount = await connection.getAccountInfo(poolAddress, "confirmed");
             
             if(poolAccount) {
-              const poolInfo = LIQUIDITY_STATE_LAYOUT_V4.decode(
-                poolAccount.data
-              );
+              const poolInfo = LIQUIDITY_STATE_LAYOUT_V4.decode(poolAccount.data);
               mintAddress = poolInfo.quoteMint.equals(SOL_ADDRESS) ? poolInfo.baseMint : poolInfo.quoteMint;
             }
           }
           const parsedInstruction = instruction as ParsedInstruction;
   
-          if(parsedInstruction?.parsed?.type == 'createAccountWithSeed' && parsedInstruction?.parsed?.info?.lamports == '2039280'){
+          if(parsedInstruction?.parsed?.type == 'createAccountWithSeed' && parsedInstruction?.parsed?.info?.lamports == '2039280') {
             isBuy = false;  
           }        
         }
@@ -330,6 +371,7 @@ async function sellWithLimitOrder( connection: Connection, mint: PublicKey, pool
     const tokenBalance = BigInt(tokenBalanceString);
     /*Track Lp Reserves*/
     while (true) {
+      console.info('Track LP reserves');
       try {
         const lpReserve = (
           await connection.getMultipleParsedAccounts([
@@ -537,5 +579,9 @@ function logToFile(action: string, wallet: string, token: string, amount: string
   const logEntry =  `${timestamp},${action},${wallet},${token},${amount},${reason}\n`; 
   fs.appendFileSync(LOG_FILE, logEntry); 
 } 
+
+export function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 setInterval(trackTargetWallet, 5000);
