@@ -3,6 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import sound from 'sound-play';
 import bs58 from 'bs58';
+import fetch from 'cross-fetch'
+import { Metaplex } from '@metaplex-foundation/js'
 
 import {
   Keypair,
@@ -147,6 +149,7 @@ async function trackTargetWallet() {
 
     try {
         signatures = await connection1.getSignaturesForAddress(TARGET_WALLET_ADDRESS, {limit: signaturesForAddressLimitCount});
+        console.log('signatures:', signatures)
     } catch (error: any) {
         console.error('Error fetching signatures:', error.cause);
         return;
@@ -177,32 +180,36 @@ async function processTransaction(signatureInfo: any) {
 
     const { signature, err } = signatureInfo;
      
-    if (err) return;
+    if (err) {
+      console.log(`${signature} is error transaction`)
+      return};
 
     const res = await analyzeSignature(connection1, signature);
 
     //console.info('res', res);
-
-    if (res && res.isBuy && res.mint && res.pool) {
+    // OB res.mint -> res.mintA, add mintB || res.mintA and res.mintB are the addresses of res.pool
+    if (res && res.isBuy && res.mintA && res.mintB && res.pool && res.which !== -1) {
 
         console.info('\x1b[32mSwap transaction\x1b[0m');
-        console.info('Mint:', res.mint.toString());
+        console.info('Mint A:', res.mintA.toString());
+        console.info('Mint B:', res.mintB.toString());
         console.info('Pool:', res.pool.toString());
 
-        const tradeSize = await getTradeSize(connection1, res.signature);
+        const tradeSize = await getTradeSize(connection1, res.signature, res.which === 0 ? res.mintB : res.mintA);
+        console.log(res.pool, res.mintA.toString(), res.mintB.toString(), tradeSize)
 
         // Skip trades below the minimum threshold
         if (tradeSize < TARGET_WALLET_MIN_TRADE) {
-            logToFile('Skipped', TARGET_WALLET_ADDRESS.toString(), res.mint.toString(), (tradeSize / 1_000_000_000).toString(), 'Below minimum trade size');
-            console.log(`Skipped: Value (${tradeSize / 1000000000} SOL) below threshold (${TARGET_WALLET_MIN_TRADE / 1000000000} SOL).`);
+            logToFile('Skipped', TARGET_WALLET_ADDRESS.toString(), res.mintA.toString(), (tradeSize).toString(), 'Below minimum trade size');
+            console.log(`Skipped: Value (${tradeSize} SOL) below threshold (${TARGET_WALLET_MIN_TRADE / 1000000000} SOL).`);
             sound.play(soundFilePaths.buyTrade);
             return;
         }
 
-        logToFile('Buy Detected', TARGET_WALLET_ADDRESS.toString(), res.mint.toString(), (tradeSize / 1_000_000_000).toString());
-        console.log(`Target: buy ${res.mint} token on ${res.pool} pool`);
+        logToFile('Buy Detected', TARGET_WALLET_ADDRESS.toString(), res.mintA.toString(), (tradeSize / 1_000_000_000).toString());
+        console.log(`Target: buy ${res.mintA} token on ${res.pool} pool`);
         sound.play(soundFilePaths.buyTradeCopied);
-        const buy =  await Buy(connection1, res.mint, res.pool);
+        const buy =  await Buy(connection1, res.mintA, res.pool);
         console.log('Buy: ', buy);
 
         if (buy && buy.mint && buy.poolKeys) {
@@ -210,7 +217,7 @@ async function processTransaction(signatureInfo: any) {
             sellWithLimitOrder(connection2, buy.mint, buy.poolKeys);
         }
     } else {
-        console.info('Not a swap transaction.');
+        console.info(`${signature} is not a swap transaction.`);
     }
 }
 
@@ -218,7 +225,7 @@ async function processTransaction(signatureInfo: any) {
  * Obtains trade size for transaction with specified signature
  */
 
-async function getTradeSize(connection: Connection, signature: string): Promise<number> {
+async function getTradeSize(connection: Connection, signature: string, mintAddress: PublicKey): Promise<number> {
 
     let transactionDetails;
     try {
@@ -228,15 +235,17 @@ async function getTradeSize(connection: Connection, signature: string): Promise<
         return 0;
     }
 
-    const postBalances = transactionDetails?.meta?.postBalances || [];
-    const preBalances = transactionDetails?.meta?.preBalances || [];
-
-    if (postBalances.length > 0 && preBalances.length > 0) {
-      const tradeSize = Math.abs(postBalances[0] - preBalances[0]); // Difference in balances
-      return tradeSize;
+    // Get the trade size
+    const logMessages = transactionDetails?.meta?.logMessages;
+    const raydiumSuccessIndex = logMessages?.findIndex(log => log === 'Program 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8 success')
+    const mintInfo = await getTokenInfo(connection, mintAddress.toString())
+    if (!logMessages || !raydiumSuccessIndex || raydiumSuccessIndex === -1 || !mintInfo) {
+      return 0;
     }
-
-    return 0;  
+    const swapMessage = logMessages[raydiumSuccessIndex + 1]
+    const amount = Number(swapMessage.split(" ")[3]) < Number(swapMessage.split(" ")[5]) ? Number(swapMessage.split(" ")[3]) : Number(swapMessage.split(" ")[5]);
+    
+    return amount / 10 ** mintInfo.decimals * mintInfo.price;  
 }
 
 /**
@@ -255,31 +264,41 @@ async function analyzeSignature(connection: Connection, signature: string) {
         return null;
     }
 
-    //console.info('Transaction details', transactionDetails);
+    console.info('Transaction details', transactionDetails);
 
     let isBuy = true;
-    let mintAddress: PublicKey | undefined;
+    let mintAAddress: PublicKey | undefined;
+    let mintBAddress: PublicKey | undefined;
     let poolAddress: PublicKey | undefined;
+    let which: number = -1;
     
     if (transactionDetails?.meta?.logMessages) {
       const logs = transactionDetails.meta.logMessages;          
       const isRaydiumLog = logs.some(log =>
-        log.includes(RAYDIUM_LIQUIDITYPOOL_V4.toString())
+        log.includes(RAYDIUM_LIQUIDITYPOOL_V4.toString())//675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8
       );          
       const isTransferLog = logs.some(log =>
         log.includes("Program log: Instruction: Transfer")
       );
+      // console.log('isRaydiumLog, isTransferLog:', isRaydiumLog, isTransferLog)
   
-      if (isRaydiumLog && isTransferLog) {    
-        //console.log('--- Detect Target Wallet Swap Transaction ---');  
+      if (isRaydiumLog && isTransferLog) {// OB isRaydiumLog && must be added =========================================================|||||||==============================================
+        // console.log('--- Detect Target Wallet Swap Transaction ---', transactionDetails.transaction.message.instructions);  
         for (const instruction of transactionDetails.transaction.message.instructions) {  
-          if ('accounts' in instruction && instruction.programId.equals(RAYDIUM_LIQUIDITYPOOL_V4)) {
-            poolAddress = instruction.accounts[1];
+          if ('accounts' in instruction && instruction.accounts.length > 0) { // OB Delete this part '&& instruction.programId.equals(RAYDIUM_LIQUIDITYPOOL_V4)'
+            const raydiumIndex = instruction.accounts.findIndex(acc => acc.equals(RAYDIUM_LIQUIDITYPOOL_V4));
+            if(raydiumIndex === -1) {
+              return {signature, pool: poolAddress, mintA: mintAAddress, mintB: mintBAddress, isBuy, which}
+            }
+            poolAddress = instruction.accounts[raydiumIndex + 1];
             const poolAccount = await connection.getAccountInfo(poolAddress, "confirmed");
             
             if(poolAccount) {
               const poolInfo = LIQUIDITY_STATE_LAYOUT_V4.decode(poolAccount.data);
-              mintAddress = poolInfo.quoteMint.equals(SOL_ADDRESS) ? poolInfo.baseMint : poolInfo.quoteMint;
+              // console.log('poolInfo', poolInfo)// OB console to check ==================================================================================================
+              mintAAddress = poolInfo.baseMint; // OB get the base mint address of Raydium pool
+              mintBAddress = poolInfo.quoteMint // OB get the quote mint address of Raydium pool
+              which = poolInfo.quoteTotalPnl < poolInfo.baseTotalPnl ? 0 : 1;
             }
           }
           const parsedInstruction = instruction as ParsedInstruction;
@@ -290,7 +309,8 @@ async function analyzeSignature(connection: Connection, signature: string) {
         }
       }
     }  
-    return {signature, pool: poolAddress, mint: mintAddress, isBuy}  
+    console.log('analyzeSignature reutrn:', signature, poolAddress, mintAAddress, isBuy)
+    return {signature, pool: poolAddress, mintA: mintAAddress, mintB: mintBAddress, isBuy, which}  
 }
 
 async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
@@ -580,8 +600,48 @@ function logToFile(action: string, wallet: string, token: string, amount: string
   fs.appendFileSync(LOG_FILE, logEntry); 
 } 
 
+// OB get token price
+async function getTokenPrice(mintAddress: string) {
+  try {
+    if (mintAddress === SOL_ADDRESS.toString()) {
+      return 1
+    }
+    const response = await fetch(`https://api.jup.ag/price/v2?ids=${mintAddress},${SOL_ADDRESS.toString()}`, {
+      method: 'get',
+      redirect: 'follow',
+    });
+    const { data } = await response.json();
+    return Number(data[mintAddress]?.price) / Number(data[SOL_ADDRESS.toString()]?.price);
+  } catch (error) {
+    console.error('Error while getTokenPrice:', error);
+    throw new Error('Error while getTokenPrice');
+  }
+}
+
+// OB get token info
+export async function getTokenInfo(connection: Connection, mintAddress: string) {
+  const metaplex = Metaplex.make(connection);
+
+  const mint = new PublicKey(mintAddress);
+
+  try {
+    const tokenMetadata = await metaplex.nfts().findByMint({ mintAddress: mint });
+    const price = await getTokenPrice(mintAddress);
+    return {
+      name: tokenMetadata.name,
+      symbol: tokenMetadata.symbol,
+      address: tokenMetadata.address.toString(),
+      decimals: tokenMetadata.mint.decimals,
+      price,
+    };
+  } catch (error) {
+    console.error('Error fetching token metadata:', error);
+  }
+}
+
 export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-setInterval(trackTargetWallet, 5000);
+trackTargetWallet()
+// setInterval(trackTargetWallet, 5000);
