@@ -196,7 +196,7 @@ async function processTransaction(signatureInfo: any) {
         console.info('Pool:', res.pool.toString());
 
         const tradeSize = await getTradeSize(connection1, res.signature, res.which === 0 ? res.mintB : res.mintA);
-        console.log(res.pool, res.mintA.toString(), res.mintB.toString(), tradeSize)
+        console.log(res.pool, res.mintA.toString(), res.mintB.toString(), tradeSize) // OB Here you can check the pool address, tokenA and tokenB address and trade size
 
         // Skip trades below the minimum threshold
         if (tradeSize < TARGET_WALLET_MIN_TRADE) {
@@ -264,7 +264,7 @@ async function analyzeSignature(connection: Connection, signature: string) {
         return null;
     }
 
-    console.info('Transaction details', transactionDetails);
+    // console.info('Transaction details', transactionDetails);
 
     let isBuy = true;
     let mintAAddress: PublicKey | undefined;
@@ -283,7 +283,7 @@ async function analyzeSignature(connection: Connection, signature: string) {
       // console.log('isRaydiumLog, isTransferLog:', isRaydiumLog, isTransferLog)
   
       if (isRaydiumLog && isTransferLog) {// OB isRaydiumLog && must be added =========================================================|||||||==============================================
-        // console.log('--- Detect Target Wallet Swap Transaction ---', transactionDetails.transaction.message.instructions);  
+        // console.log('--- Detect Target Wallet Raydium Swap Transaction ---', transactionDetails.transaction.message.instructions);  
         for (const instruction of transactionDetails.transaction.message.instructions) {  
           if ('accounts' in instruction && instruction.accounts.length > 0) { // OB Delete this part '&& instruction.programId.equals(RAYDIUM_LIQUIDITYPOOL_V4)'
             const raydiumIndex = instruction.accounts.findIndex(acc => acc.equals(RAYDIUM_LIQUIDITYPOOL_V4));
@@ -643,5 +643,4 @@ export function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-trackTargetWallet()
-// setInterval(trackTargetWallet, 5000);
+setInterval(trackTargetWallet, 5000);
