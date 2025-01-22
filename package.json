@@ -6,7 +6,7 @@
     "start": "node dist/index.js",
     "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "ts-node ./src/index.ts"
+    "dev": "ts-node ./src/index1.ts"
   },
   "keywords": [],
   "author": "",
