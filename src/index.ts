@@ -15,7 +15,24 @@ import {
   VersionedTransaction,
   Connection,
   ConfirmedSignatureInfo,
+  LogsFilter,
+  ParsedTransactionWithMeta,
+  PartiallyDecodedInstruction,
 } from '@solana/web3.js';
+import {
+  LIQUIDITY_STATE_LAYOUT_V4,
+  Liquidity,
+  MARKET_STATE_LAYOUT_V3,
+  SPL_MINT_LAYOUT,
+  LiquidityPoolKeys,
+  Market,
+} from '@raydium-io/raydium-sdk';
+
+import {
+  createAssociatedTokenAccountIdempotentInstruction,
+  createCloseAccountInstruction,
+  getAssociatedTokenAddressSync,
+} from '@solana/spl-token';
 
 // Process command-line arguments
 // The app requires strictly one command-line argument which must be a path to configuration file
@@ -40,12 +57,19 @@ dotenv.config({ path: pathToConfigurationFile });
 
 // Initialize parameters from environment variables
 
-const connection1 = new Connection(process.env.CONNECTION_URL_1 || '', { commitment: 'confirmed' });
-const connection2 = new Connection(process.env.CONNECTION_URL_2 || '', { commitment: 'confirmed' });
+const connection1 = new Connection(process.env.CONNECTION_URL_1 || '', {
+  wsEndpoint: process.env.CONNECTION_WS_URL_1,
+  commitment: 'confirmed',
+});
+const connection2 = new Connection(process.env.CONNECTION_URL_2 || '', {
+  wsEndpoint: process.env.CONNECTION_WS_URL_2,
+  commitment: 'confirmed',
+});
 const TARGET_WALLET_ADDRESS = new PublicKey(process.env.TARGET_WALLET_ADDRESS || '');
 const TARGET_WALLET_MIN_TRADE = parseInt(process.env.TARGET_WALLET_MIN_TRADE || '0');
 const RAYDIUM_LIQUIDITYPOOL_V4 = new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8');
 const RAYDIUM_CONCENTRATED_LIQUIDITY = new PublicKey('CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK');
+const INSTRUCTION_NAME = 'ray_log';
 const SOL_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112');
 const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY || ''));
 const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
@@ -60,21 +84,6 @@ const soundFilePaths = {
   sellTrade: path.join(__dirname, '../sounds/bot-sell-trade.mp3'),
   sellTradeCopied: path.join(__dirname, '../sounds/bot-sell-trade-copied.mp3'),
 };
-
-import {
-  LIQUIDITY_STATE_LAYOUT_V4,
-  Liquidity,
-  MARKET_STATE_LAYOUT_V3,
-  SPL_MINT_LAYOUT,
-  LiquidityPoolKeys,
-  Market,
-} from '@raydium-io/raydium-sdk';
-
-import {
-  createAssociatedTokenAccountIdempotentInstruction,
-  createCloseAccountInstruction,
-  getAssociatedTokenAddressSync,
-} from '@solana/spl-token';
 
 const LAMPORTS_IN_SOL = 1_000_000_000;
 
@@ -126,77 +135,126 @@ const processedTransactionSignaturesLimitCount = signaturesForAddressLimitCount 
 
 let buyTokenList: PublicKey[] = [];
 
+async function monitorNewToken() {
+  console.log('Monitoring new Token...');
+  let loop = true;
+  try {
+    await connection1.onLogs(
+      TARGET_WALLET_ADDRESS,
+      // RAYDIUM_LIQUIDITYPOOL_V4, // This is for test
+      async ({ logs, err, signature }) => {
+        if (err) {
+          return;
+        }
+        if (
+          loop && // OB For test | Remove in production mode
+          logs &&
+          logs.some((log) => log.includes(INSTRUCTION_NAME)) &&
+          logs.some((log) => log.includes(RAYDIUM_LIQUIDITYPOOL_V4.toString()))
+        ) {
+          // OB If transaction is error transaction
+          if (err) {
+            console.log(`${signature} is error transaction.`);
+            return;
+          }
+
+          // OB If transaction is already processed
+          if (processedTransactionSignatures.includes(signature)) {
+            return;
+          }
+
+          loop = false; // Variable for test mode | Unnecessary in production mode
+          console.log("Signature for 'ray_log':", `https://explorer.solana.com/tx/${signature}`);
+
+          // OB Get the transaction from signature
+          const transaction = await connection1.getParsedTransaction(signature, {
+            commitment: 'confirmed',
+            maxSupportedTransactionVersion: 0,
+          });
+
+          // If no transaction
+          if (!transaction) {
+            return;
+          }
+          await processTransaction(transaction, signature);
+
+          processedTransactionSignatures.push(signature);
+          // OB Remove the first item if the array exceed the limitation of length
+          if (processedTransactionSignatures.length > processedTransactionSignaturesLimitCount) {
+            processedTransactionSignatures.shift();
+          }
+        }
+      },
+      'finalized'
+    );
+  } catch (error) {
+    console.error('Error while monitorNewToken:', error);
+  }
+}
+
 /*
  * Primary function invoked by main loop and calling all subsequent functions during its work
  */
 
-async function trackTargetWallet() {
-  let signatures;
+// async function trackTargetWallet() {
+//   let signatures;
 
-  try {
-    signatures = await connection1.getSignaturesForAddress(TARGET_WALLET_ADDRESS, {
-      limit: signaturesForAddressLimitCount,
-    });
-    console.log('signatures:', signatures);
-  } catch (error: any) {
-    console.error('Error fetching signatures:', error.cause);
-    return;
-  }
+//   try {
+//     signatures = await connection1.getSignaturesForAddress(TARGET_WALLET_ADDRESS, {
+//       limit: signaturesForAddressLimitCount,
+//     });
+//     console.log('signatures:', signatures);
+//   } catch (error: any) {
+//     console.error('Error fetching signatures:', error.cause);
+//     return;
+//   }
 
-  for (const signatureInfo of signatures) {
-    // Send for processing only unprocessed transactions
-    // Do not send transactions created before app launch
-    if (
-      signatureInfo.blockTime &&
-      signatureInfo.blockTime > appStartedAtSeconds &&
-      !processedTransactionSignatures.includes(signatureInfo.signature)
-    ) {
-      await processTransaction(signatureInfo);
-      processedTransactionSignatures.push(signatureInfo.signature);
-      if (processedTransactionSignatures.length > processedTransactionSignaturesLimitCount)
-        processedTransactionSignatures.shift(); // Remove first value to keep this list relatively short
-    }
-  }
-}
+//   for (const signatureInfo of signatures) {
+//     // Send for processing only unprocessed transactions
+//     // Do not send transactions created before app launch
+//     if (
+//       signatureInfo.blockTime &&
+//       signatureInfo.blockTime > appStartedAtSeconds &&
+//       !processedTransactionSignatures.includes(signatureInfo.signature)
+//     ) {
+//       await processTransaction(signatureInfo);
+//       processedTransactionSignatures.push(signatureInfo.signature);
+//       if (processedTransactionSignatures.length > processedTransactionSignaturesLimitCount)
+//         processedTransactionSignatures.shift(); // Remove first value to keep this list relatively short
+//     }
+//   }
+// }
 
 /*
  * Process specific transaction
  */
 
-async function processTransaction(signatureInfo: ConfirmedSignatureInfo) {
-  console.log('Transaction detected:');
-  console.log('Signature:', signatureInfo.signature);
+async function processTransaction(transaction: ParsedTransactionWithMeta, signature: string) {
+  console.log('Transaction detected:', transaction);
   console.info(
     'Timestamp:',
-    (signatureInfo.blockTime && new Date(signatureInfo.blockTime * 1000).toLocaleString()) || 'None'
+    (transaction.blockTime && new Date(transaction.blockTime * 1000).toLocaleString()) || 'None'
   );
 
-  const { signature, err } = signatureInfo;
+  // OB Analyze transaction, get pool, mintA and mintB account
+  const { pool, mintA, mintB } = await analyzeTransaction(transaction);
 
-  if (err) {
-    console.log(`${signature} is error transaction`);
-    return;
-  }
-
-  const res = await analyzeSignature(signature);
-
-  //console.info('res', res);
-  // OB res.mint -> res.mintA, add mintB || res.mintA and res.mintB are the addresses of res.pool
-  if (res && res.isBuy && res.mintA && res.mintB && res.pool && res.which !== -1) {
+  console.info('res', pool?.toString(), mintA?.toString(), mintB?.toString());
+  if (mintA && mintB && pool) {
     console.info('\x1b[32mSwap transaction\x1b[0m');
-    console.info('Mint A:', res.mintA.toString());
-    console.info('Mint B:', res.mintB.toString());
-    console.info('Pool:', res.pool.toString());
+    console.info('Mint A:', mintA.toString());
+    console.info('Mint B:', mintB.toString());
+    console.info('Pool:', pool.toString());
 
-    const tradeSize = await getTradeSize(connection1, res.signature, res.which === 0 ? res.mintB : res.mintA);
-    console.log(res.pool, res.mintA.toString(), res.mintB.toString(), tradeSize); // OB Here you can check the pool address, tokenA and tokenB address and trade size
+    const tradeSize = await getTradeSize(connection1, transaction, mintA, mintB);
+    console.log(pool, mintA.toString(), mintB.toString(), tradeSize); // OB Here you can check the pool address, tokenA and tokenB address and trade size
 
     // Skip trades below the minimum threshold
     if (tradeSize < TARGET_WALLET_MIN_TRADE) {
       logToFile(
         'Skipped',
         TARGET_WALLET_ADDRESS.toString(),
-        res.mintA.toString(),
+        mintA.toString(),
         tradeSize.toString(),
         'Below minimum trade size'
       );
@@ -208,12 +266,12 @@ async function processTransaction(signatureInfo: ConfirmedSignatureInfo) {
     logToFile(
       'Buy Detected',
       TARGET_WALLET_ADDRESS.toString(),
-      res.mintA.toString(),
+      mintA.toString(),
       (tradeSize / 1_000_000_000).toString()
     );
-    console.log(`Target: buy ${res.mintA} token on ${res.pool} pool`);
+    console.log(`Target: buy ${mintA} token on ${pool} pool`);
     sound.play(soundFilePaths.buyTradeCopied);
-    const buy = await Buy(connection1, res.mintA, res.pool);
+    const buy = await Buy(connection1, mintA, pool);
     console.log('Buy: ', buy);
 
     if (buy && buy.mint && buy.poolKeys) {
@@ -229,34 +287,26 @@ async function processTransaction(signatureInfo: ConfirmedSignatureInfo) {
  * Obtains trade size for transaction with specified signature
  */
 
-async function getTradeSize(connection: Connection, signature: string, mintAddress: PublicKey): Promise<number> {
-  let transactionDetails;
-  try {
-    transactionDetails = await connection.getParsedTransaction(signature, {
-      commitment: 'confirmed',
-      maxSupportedTransactionVersion: 0,
-    });
-  } catch (error) {
-    console.error('Error fetching trade size:', error);
-    return 0;
-  }
+async function getTradeSize(
+  connection: Connection,
+  transaction: ParsedTransactionWithMeta,
+  mintAAccount: PublicKey,
+  mintBAccount: PublicKey
+): Promise<number> {
+  const postTokenBalances = transaction.meta?.postTokenBalances;
+  const preTokenBalances = transaction.meta?.preTokenBalances;
 
-  // Get the trade size
-  const logMessages = transactionDetails?.meta?.logMessages;
-  const raydiumSuccessIndex = logMessages?.findIndex(
-    (log) => log === 'Program 675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8 success'
-  );
-  const mintInfo = await getTokenInfo(connection, mintAddress.toString());
-  if (!logMessages || !raydiumSuccessIndex || raydiumSuccessIndex === -1 || !mintInfo) {
-    return 0;
-  }
-  const swapMessage = logMessages[raydiumSuccessIndex + 1];
-  const amount =
-    Number(swapMessage.split(' ')[3]) < Number(swapMessage.split(' ')[5])
-      ? Number(swapMessage.split(' ')[3])
-      : Number(swapMessage.split(' ')[5]);
+  const diffMintA =
+    (postTokenBalances?.find((post) => post.mint === mintAAccount.toString())?.uiTokenAmount.uiAmount || 0) -
+    (preTokenBalances?.find((pre) => pre.mint === mintAAccount.toString())?.uiTokenAmount.uiAmount || 0);
 
-  return (amount / 10 ** mintInfo.decimals) * mintInfo.price;
+  const diffMintB =
+    (postTokenBalances?.find((post) => post.mint === mintBAccount.toString())?.uiTokenAmount.uiAmount || 0) -
+    (preTokenBalances?.find((pre) => pre.mint === mintBAccount.toString())?.uiTokenAmount.uiAmount || 0);
+
+  console.log('diffMintA, diffMintB', diffMintA, diffMintB);
+
+  return diffMintA;
 }
 
 /**
@@ -264,69 +314,47 @@ async function getTradeSize(connection: Connection, signature: string, mintAddre
  * @param signature
  * @returns
  */
-async function analyzeSignature(signature: string) {
-  let transactionDetails;
-  try {
-    transactionDetails = await connection1.getParsedTransaction(signature, {
-      commitment: 'confirmed',
-      maxSupportedTransactionVersion: 0,
-    });
-  } catch (error) {
-    console.log('Error: analyze signature error!');
-    return null;
+async function analyzeTransaction(transaction: ParsedTransactionWithMeta) {
+  console.info('Transaction details', transaction);
+  console.info('Balance', transaction.meta?.postTokenBalances, transaction.meta?.preTokenBalances);
+  console.info('Instructions', transaction.transaction.message.instructions);
+
+  let mintAAccount: PublicKey | undefined;
+  let mintBAccount: PublicKey | undefined;
+  let poolAccount: PublicKey | undefined;
+
+  // OB Find all accounts of RAYDIUM_LIQUIDITYPOOL_V4 instruction
+  const accounts = (
+    transaction.transaction.message.instructions.find((instruction) => {
+      return instruction.programId.toString() == RAYDIUM_LIQUIDITYPOOL_V4.toString();
+    }) as PartiallyDecodedInstruction
+  )?.accounts;
+  console.log('accounts', accounts);
+
+  if (!accounts) {
+    return { pool: poolAccount, mintA: mintAAccount, mintB: mintBAccount };
   }
 
-  console.info('Transaction details', transactionDetails);
+  const tokenAccounts: PublicKey[] = [];
+  tokenAccounts.push(accounts[5]);
+  tokenAccounts.push(accounts[6]);
+  poolAccount = accounts[1];
 
-  let isBuy = true;
-  let mintAAddress: PublicKey | undefined;
-  let mintBAddress: PublicKey | undefined;
-  let poolAddress: PublicKey | undefined;
-  let which: number = -1;
-
-  if (transactionDetails?.meta?.logMessages) {
-    const logs = transactionDetails.meta.logMessages;
-    const isRaydiumLog = logs.some(
-      (log) =>
-        log.includes(RAYDIUM_LIQUIDITYPOOL_V4.toString()) || log.includes(RAYDIUM_CONCENTRATED_LIQUIDITY.toString()) //675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8 CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK
-    );
-    const isSwapLog = logs.some((log) => log.includes('Program log: Instruction: Swap'));
-    console.log('isRaydiumLog, isSwapLog:', isRaydiumLog, isSwapLog)
-
-    if (isRaydiumLog && isSwapLog) {
-      // OB isRaydiumLog && must be added =========================================================|||||||==============================================
-      console.log('--- Detect Target Wallet Raydium Swap Transaction ---\nInstructions:', transactionDetails.transaction.message.instructions);
-      for (const instruction of transactionDetails.transaction.message.instructions) {
-        if ('accounts' in instruction && instruction.accounts.length > 0) {
-          // OB Delete this part '&& instruction.programId.equals(RAYDIUM_LIQUIDITYPOOL_V4)'
-          const raydiumIndex = instruction.accounts.findIndex((acc) => acc.equals(RAYDIUM_LIQUIDITYPOOL_V4));
-          if (raydiumIndex === -1) {
-            return { signature, pool: poolAddress, mintA: mintAAddress, mintB: mintBAddress, isBuy, which };
-          }
-          poolAddress = instruction.accounts[raydiumIndex + 1];
-          const poolAccount = await connection1.getAccountInfo(poolAddress, 'confirmed');
-
-          if (poolAccount) {
-            const poolInfo = LIQUIDITY_STATE_LAYOUT_V4.decode(poolAccount.data);
-            // console.log('poolInfo', poolInfo)// OB console to check ==================================================================================================
-            mintAAddress = poolInfo.baseMint; // OB get the base mint address of Raydium pool
-            mintBAddress = poolInfo.quoteMint; // OB get the quote mint address of Raydium pool
-            which = poolInfo.quoteTotalPnl < poolInfo.baseTotalPnl ? 0 : 1;
-          }
-        }
-        const parsedInstruction = instruction as ParsedInstruction;
-
-        if (
-          parsedInstruction?.parsed?.type == 'createAccountWithSeed' &&
-          parsedInstruction?.parsed?.info?.lamports == '2039280'
-        ) {
-          isBuy = false;
-        }
-      }
-    }
+  // OB Get information of pool account
+  const poolInfo = await connection1.getAccountInfo(poolAccount, { commitment: 'confirmed' });
+  if (!poolInfo) {
+    return { pool: poolAccount, mintA: mintAAccount, mintB: mintBAccount };
   }
-  console.log('analyzeSignature reutrn:', signature, poolAddress, mintAAddress, isBuy);
-  return { signature, pool: poolAddress, mintA: mintAAddress, mintB: mintBAddress, isBuy, which };
+
+  // OB Decode the data of information of pool account
+  const poolData = LIQUIDITY_STATE_LAYOUT_V4.decode(poolInfo?.data);
+  console.log('pool information', poolData);
+
+  mintAAccount = poolData.baseMint;
+  mintBAccount = poolData.quoteMint;
+
+  console.log('analyzeSignature reutrn:', poolAccount, mintAAccount, mintBAccount);
+  return { pool: poolAccount, mintA: mintAAccount, mintB: mintBAccount };
 }
 
 async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
@@ -614,4 +642,5 @@ export function sleep(ms: number): Promise<void> {
 }
 
 // setInterval(trackTargetWallet, 5000);
-trackTargetWallet();
+// trackTargetWallet();
+monitorNewToken();
