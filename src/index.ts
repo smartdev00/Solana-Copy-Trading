@@ -33,6 +33,7 @@ import {
   createCloseAccountInstruction,
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token';
+import { logger, roundToDecimal } from './utils';
 
 // Process command-line arguments
 // The app requires strictly one command-line argument which must be a path to configuration file
@@ -58,18 +59,17 @@ dotenv.config({ path: pathToConfigurationFile });
 // Initialize parameters from environment variables
 
 const connection1 = new Connection(process.env.CONNECTION_URL_1 || '', {
-  wsEndpoint: process.env.CONNECTION_WS_URL_1,
+  wsEndpoint: process.env.CONNECTION_WSS_URL_1,
   commitment: 'confirmed',
 });
 const connection2 = new Connection(process.env.CONNECTION_URL_2 || '', {
-  wsEndpoint: process.env.CONNECTION_WS_URL_2,
+  wsEndpoint: process.env.CONNECTION_WSS_URL_2,
   commitment: 'confirmed',
 });
 const TARGET_WALLET_ADDRESS = new PublicKey(process.env.TARGET_WALLET_ADDRESS || '');
 const TARGET_WALLET_MIN_TRADE = parseInt(process.env.TARGET_WALLET_MIN_TRADE || '0');
 const RAYDIUM_LIQUIDITYPOOL_V4 = new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8');
-const RAYDIUM_CONCENTRATED_LIQUIDITY = new PublicKey('CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK');
-const INSTRUCTION_NAME = 'ray_log';
+const RAYDIUM_AUTHORITY_V4 = new PublicKey('5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1');
 const SOL_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112');
 const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY || ''));
 const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
@@ -88,10 +88,6 @@ const soundFilePaths = {
 const LAMPORTS_IN_SOL = 1_000_000_000;
 
 // Confirm the bot started working
-console.info('Gamesoft Interactive, 2025');
-console.info('Copy trading bot for Solana.');
-console.info('Using configuration file', pathToConfigurationFile);
-console.info('Target wallet address', process.env.TARGET_WALLET_ADDRESS);
 console.info('Target wallet minimal trade size', TARGET_WALLET_MIN_TRADE / LAMPORTS_IN_SOL, 'SOL');
 console.info('Trading amount', TRADE_AMOUNT / LAMPORTS_IN_SOL, 'SOL');
 
@@ -136,7 +132,7 @@ const processedTransactionSignaturesLimitCount = signaturesForAddressLimitCount 
 let buyTokenList: PublicKey[] = [];
 
 async function monitorNewToken() {
-  console.log('Monitoring new Token...');
+  console.log('Monitoring wallet:', TARGET_WALLET_ADDRESS.toString());
   let loop = true;
   try {
     await connection1.onLogs(
@@ -146,25 +142,19 @@ async function monitorNewToken() {
         if (err) {
           return;
         }
-        if (
-          loop && // OB For test | Remove in production mode
-          logs &&
-          logs.some((log) => log.includes(INSTRUCTION_NAME)) &&
-          logs.some((log) => log.includes(RAYDIUM_LIQUIDITYPOOL_V4.toString()))
-        ) {
-          // OB If transaction is error transaction
+
+        // SmartFox Remove the unnecessary criteria
+        if (logs && logs.some((log) => log.includes(RAYDIUM_LIQUIDITYPOOL_V4.toString()))) {
+          // SmartFox Skip the error transaction
           if (err) {
             console.log(`${signature} is error transaction.`);
             return;
           }
 
-          // OB If transaction is already processed
+          // SmartFox Skip the already processed transaction
           if (processedTransactionSignatures.includes(signature)) {
             return;
           }
-
-          loop = false; // Variable for test mode | Unnecessary in production mode
-          console.log("Signature for 'ray_log':", `https://explorer.solana.com/tx/${signature}`);
 
           // OB Get the transaction from signature
           const transaction = await connection1.getParsedTransaction(signature, {
@@ -185,7 +175,7 @@ async function monitorNewToken() {
           }
         }
       },
-      'finalized'
+      'confirmed'
     );
   } catch (error) {
     console.error('Error while monitorNewToken:', error);
@@ -230,35 +220,54 @@ async function monitorNewToken() {
  */
 
 async function processTransaction(transaction: ParsedTransactionWithMeta, signature: string) {
-  console.log('Transaction detected:', transaction);
-  console.info(
-    'Timestamp:',
-    (transaction.blockTime && new Date(transaction.blockTime * 1000).toLocaleString()) || 'None'
-  );
+  // SmartFox Analyze transaction, get poolAccount, solAccount and tokenAccount account
+  const { poolAccount, solAccount, tokenAccount } = await analyzeTransaction(transaction);
 
-  // OB Analyze transaction, get pool, mintA and mintB account
-  const { pool, mintA, mintB } = await analyzeTransaction(transaction);
+  if (solAccount && tokenAccount && poolAccount) {
+    const trade = await getTradeSize(transaction, solAccount, tokenAccount);
 
-  console.info('res', pool?.toString(), mintA?.toString(), mintB?.toString());
-  if (mintA && mintB && pool) {
-    console.info('\x1b[32mSwap transaction\x1b[0m');
-    console.info('Mint A:', mintA.toString());
-    console.info('Mint B:', mintB.toString());
-    console.info('Pool:', pool.toString());
-
-    const tradeSize = await getTradeSize(connection1, transaction, mintA, mintB);
-    console.log(pool, mintA.toString(), mintB.toString(), tradeSize); // OB Here you can check the pool address, tokenA and tokenB address and trade size
+    // SmartFox log the detail information of swap transaction
+    if (trade.isBuy) {
+      logger({
+        type: 'Buy',
+        target_wallet: TARGET_WALLET_ADDRESS.toString(),
+        pool_address: poolAccount.toString(),
+        from: {
+          token_address: SOL_ADDRESS.toString(),
+          amount: trade.diffSol,
+        },
+        to: {
+          token_address: tokenAccount.toString(),
+          amount: trade.diffOther,
+        },
+        signature,
+      });
+    } else {
+      logger({
+        type: 'Sell',
+        target_wallet: TARGET_WALLET_ADDRESS.toString(),
+        pool_address: poolAccount.toString(),
+        from: {
+          token_address: tokenAccount.toString(),
+          amount: trade.diffOther,
+        },
+        to: {
+          token_address: SOL_ADDRESS.toString(),
+          amount: trade.diffSol,
+        },
+        signature,
+      });
+    }
 
     // Skip trades below the minimum threshold
-    if (tradeSize < TARGET_WALLET_MIN_TRADE) {
+    if (trade.diffSol < TARGET_WALLET_MIN_TRADE) {
       logToFile(
         'Skipped',
         TARGET_WALLET_ADDRESS.toString(),
-        mintA.toString(),
-        tradeSize.toString(),
+        solAccount.toString(),
+        trade.diffSol.toString(),
         'Below minimum trade size'
       );
-      console.log(`Skipped: Value (${tradeSize} SOL) below threshold (${TARGET_WALLET_MIN_TRADE / 1000000000} SOL).`);
       sound.play(soundFilePaths.buyTrade);
       return;
     }
@@ -266,13 +275,11 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
     logToFile(
       'Buy Detected',
       TARGET_WALLET_ADDRESS.toString(),
-      mintA.toString(),
-      (tradeSize / 1_000_000_000).toString()
+      solAccount.toString(),
+      (trade.diffSol / 1_000_000_000).toString()
     );
-    console.log(`Target: buy ${mintA} token on ${pool} pool`);
     sound.play(soundFilePaths.buyTradeCopied);
-    const buy = await Buy(connection1, mintA, pool);
-    console.log('Buy: ', buy);
+    const buy = await Buy(connection1, tokenAccount, poolAccount);
 
     if (buy && buy.mint && buy.poolKeys) {
       sound.play(soundFilePaths.sellTrade);
@@ -286,27 +293,37 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 /**
  * Obtains trade size for transaction with specified signature
  */
-
-async function getTradeSize(
-  connection: Connection,
-  transaction: ParsedTransactionWithMeta,
-  mintAAccount: PublicKey,
-  mintBAccount: PublicKey
-): Promise<number> {
+// SmartFox Calculate correctly the trade size and confirm whether tx is buy or sell
+async function getTradeSize(transaction: ParsedTransactionWithMeta, solAccount: PublicKey, otherAccount: PublicKey) {
   const postTokenBalances = transaction.meta?.postTokenBalances;
   const preTokenBalances = transaction.meta?.preTokenBalances;
 
-  const diffMintA =
-    (postTokenBalances?.find((post) => post.mint === mintAAccount.toString())?.uiTokenAmount.uiAmount || 0) -
-    (preTokenBalances?.find((pre) => pre.mint === mintAAccount.toString())?.uiTokenAmount.uiAmount || 0);
+  const decimals =
+    postTokenBalances?.find(
+      (post) => post.mint === otherAccount.toString() && post.owner === RAYDIUM_AUTHORITY_V4.toString()
+    )?.uiTokenAmount.decimals || 0;
 
-  const diffMintB =
-    (postTokenBalances?.find((post) => post.mint === mintBAccount.toString())?.uiTokenAmount.uiAmount || 0) -
-    (preTokenBalances?.find((pre) => pre.mint === mintBAccount.toString())?.uiTokenAmount.uiAmount || 0);
+  const diffSol =
+    (postTokenBalances?.find(
+      (post) => post.mint === solAccount.toString() && post.owner === RAYDIUM_AUTHORITY_V4.toString()
+    )?.uiTokenAmount.uiAmount || 0) -
+    (preTokenBalances?.find(
+      (pre) => pre.mint === solAccount.toString() && pre.owner === RAYDIUM_AUTHORITY_V4.toString()
+    )?.uiTokenAmount.uiAmount || 0);
 
-  console.log('diffMintA, diffMintB', diffMintA, diffMintB);
+  const diffOther =
+    (postTokenBalances?.find(
+      (post) => post.mint === otherAccount.toString() && post.owner === RAYDIUM_AUTHORITY_V4.toString()
+    )?.uiTokenAmount.uiAmount || 0) -
+    (preTokenBalances?.find(
+      (pre) => pre.mint === otherAccount.toString() && pre.owner === RAYDIUM_AUTHORITY_V4.toString()
+    )?.uiTokenAmount.uiAmount || 0);
 
-  return diffMintA;
+  return {
+    diffSol: Math.abs(roundToDecimal(diffSol)),
+    diffOther: Math.abs(roundToDecimal(diffOther, decimals)),
+    isBuy: diffSol > 0 ? true : false,
+  };
 }
 
 /**
@@ -315,12 +332,8 @@ async function getTradeSize(
  * @returns
  */
 async function analyzeTransaction(transaction: ParsedTransactionWithMeta) {
-  console.info('Transaction details', transaction);
-  console.info('Balance', transaction.meta?.postTokenBalances, transaction.meta?.preTokenBalances);
-  console.info('Instructions', transaction.transaction.message.instructions);
-
-  let mintAAccount: PublicKey | undefined;
-  let mintBAccount: PublicKey | undefined;
+  let solAccount: PublicKey | undefined;
+  let tokenAccount: PublicKey | undefined;
   let poolAccount: PublicKey | undefined;
 
   // OB Find all accounts of RAYDIUM_LIQUIDITYPOOL_V4 instruction
@@ -329,10 +342,9 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta) {
       return instruction.programId.toString() == RAYDIUM_LIQUIDITYPOOL_V4.toString();
     }) as PartiallyDecodedInstruction
   )?.accounts;
-  console.log('accounts', accounts);
 
   if (!accounts) {
-    return { pool: poolAccount, mintA: mintAAccount, mintB: mintBAccount };
+    return { poolAccount, solAccount, tokenAccount };
   }
 
   const tokenAccounts: PublicKey[] = [];
@@ -343,23 +355,20 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta) {
   // OB Get information of pool account
   const poolInfo = await connection1.getAccountInfo(poolAccount, { commitment: 'confirmed' });
   if (!poolInfo) {
-    return { pool: poolAccount, mintA: mintAAccount, mintB: mintBAccount };
+    return { poolAccount, solAccount, tokenAccount };
   }
 
   // OB Decode the data of information of pool account
   const poolData = LIQUIDITY_STATE_LAYOUT_V4.decode(poolInfo?.data);
-  console.log('pool information', poolData);
 
-  mintAAccount = poolData.baseMint;
-  mintBAccount = poolData.quoteMint;
+  solAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.baseMint : poolData.quoteMint;
+  tokenAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.quoteMint : poolData.baseMint;
 
-  console.log('analyzeSignature reutrn:', poolAccount, mintAAccount, mintBAccount);
-  return { pool: poolAccount, mintA: mintAAccount, mintB: mintBAccount };
+  return { poolAccount, solAccount, tokenAccount };
 }
 
 async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
   try {
-    console.log('Buy start');
     if (buyTokenList.includes(mint)) {
       logToFile(
         'Skipped',
