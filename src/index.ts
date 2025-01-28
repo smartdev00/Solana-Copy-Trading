@@ -70,6 +70,7 @@ const TARGET_WALLET_ADDRESS = new PublicKey(process.env.TARGET_WALLET_ADDRESS ||
 const TARGET_WALLET_MIN_TRADE = parseInt(process.env.TARGET_WALLET_MIN_TRADE || '0');
 const RAYDIUM_LIQUIDITYPOOL_V4 = new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8');
 const RAYDIUM_AUTHORITY_V4 = new PublicKey('5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1');
+const TOKEN_PROGRAM = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const SOL_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112');
 const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY || ''));
 const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
@@ -336,21 +337,31 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta) {
   let tokenAccount: PublicKey | undefined;
   let poolAccount: PublicKey | undefined;
 
-  // OB Find all accounts of RAYDIUM_LIQUIDITYPOOL_V4 instruction
-  const accounts = (
-    transaction.transaction.message.instructions.find((instruction) => {
-      return instruction.programId.toString() == RAYDIUM_LIQUIDITYPOOL_V4.toString();
-    }) as PartiallyDecodedInstruction
-  )?.accounts;
+  // SmartFox Get all instructions from transaction
+  const instructions = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
+
+  // OB Find all accounts of instruction that the length is greater than 0
+  const accounts = instructions.find((instruction) => {
+    return instruction.accounts && instruction.accounts.length > 0;
+  })?.accounts;
 
   if (!accounts) {
     return { poolAccount, solAccount, tokenAccount };
   }
 
-  const tokenAccounts: PublicKey[] = [];
-  tokenAccounts.push(accounts[5]);
-  tokenAccounts.push(accounts[6]);
-  poolAccount = accounts[1];
+  // SmartFox Find the pool account that the owner is RAYDIUM_LIQUIDITYPOOL_V4
+  for (const acc of accounts) {
+    const poolInfo = await connection1.getAccountInfo(acc, { commitment: 'confirmed' });
+
+    if (poolInfo?.owner.equals(RAYDIUM_LIQUIDITYPOOL_V4)) {
+      poolAccount = acc;
+      break; // Exit the loop once the account is found
+    }
+  }
+
+  if (!poolAccount) {
+    return { poolAccount, solAccount, tokenAccount };
+  }
 
   // OB Get information of pool account
   const poolInfo = await connection1.getAccountInfo(poolAccount, { commitment: 'confirmed' });
