@@ -8,14 +8,11 @@ import { Metaplex } from '@metaplex-foundation/js';
 import {
   Keypair,
   PublicKey,
-  ParsedInstruction,
   TransactionInstruction,
   ComputeBudgetProgram,
   TransactionMessage,
   VersionedTransaction,
   Connection,
-  ConfirmedSignatureInfo,
-  LogsFilter,
   ParsedTransactionWithMeta,
   PartiallyDecodedInstruction,
 } from '@solana/web3.js';
@@ -338,24 +335,19 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta) {
   let poolAccount: PublicKey | undefined;
 
   // SmartFox Get all instructions from transaction
-  const instructions = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
+  const instrs = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
+  const instrsWithAccs = instrs.filter((instr) => instr.accounts && instr.accounts.length > 0);
 
-  // OB Find all accounts of instruction that the length is greater than 0
-  const accounts = instructions.find((instruction) => {
-    return instruction.accounts && instruction.accounts.length > 0;
-  })?.accounts;
+  // SmartFox Loop until will find the account that its owner is RAYDIUM_LIQUIDITYPOOL_V4
+  outerLoop: for (const instr of instrsWithAccs) {
+    const accounts = instr.accounts;
+    for (const acc of accounts) {
+      const poolInfo = await connection1.getAccountInfo(acc, { commitment: 'confirmed' });
 
-  if (!accounts) {
-    return { poolAccount, solAccount, tokenAccount };
-  }
-
-  // SmartFox Find the pool account that the owner is RAYDIUM_LIQUIDITYPOOL_V4
-  for (const acc of accounts) {
-    const poolInfo = await connection1.getAccountInfo(acc, { commitment: 'confirmed' });
-
-    if (poolInfo?.owner.equals(RAYDIUM_LIQUIDITYPOOL_V4)) {
-      poolAccount = acc;
-      break; // Exit the loop once the account is found
+      if (poolInfo?.owner.equals(RAYDIUM_LIQUIDITYPOOL_V4)) {
+        poolAccount = acc;
+        break outerLoop; // Exit the loop once the account is found
+      }
     }
   }
 
