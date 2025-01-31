@@ -443,7 +443,6 @@ async function getTokenMintAddress(source: string, destination: string) {
   try {
     let accountInfo = await connection1.getParsedAccountInfo(new PublicKey(source));
     if (!accountInfo.value) accountInfo = await connection1.getParsedAccountInfo(new PublicKey(destination));
-    console.log('getTokenMintAddress accountInfo.value?.data', accountInfo.value?.data, 'accAddr', source);
     const tokenInfo = (accountInfo.value?.data as ParsedAccountData).parsed?.info;
     return {
       mint: tokenInfo?.mint || null,
