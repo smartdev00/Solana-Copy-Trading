@@ -4,7 +4,7 @@ import fs from 'fs';
 import sound from 'sound-play';
 import bs58 from 'bs58';
 import fetch from 'cross-fetch';
-import { Metaplex } from '@metaplex-foundation/js';
+import { Metaplex, amount } from '@metaplex-foundation/js';
 import {
   Keypair,
   PublicKey,
@@ -15,6 +15,8 @@ import {
   Connection,
   ParsedTransactionWithMeta,
   PartiallyDecodedInstruction,
+  ParsedInstruction,
+  ParsedAccountData,
 } from '@solana/web3.js';
 import {
   LIQUIDITY_STATE_LAYOUT_V4,
@@ -29,6 +31,7 @@ import {
   createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
   getAssociatedTokenAddressSync,
+  decodeTransferInstruction,
 } from '@solana/spl-token';
 import { logger, roundToDecimal } from './utils';
 
@@ -67,6 +70,12 @@ const TARGET_WALLET_ADDRESS = new PublicKey(process.env.TARGET_WALLET_ADDRESS ||
 const TARGET_WALLET_MIN_TRADE = parseInt(process.env.TARGET_WALLET_MIN_TRADE || '0');
 const RAYDIUM_LIQUIDITYPOOL_V4 = new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8');
 const RAYDIUM_AUTHORITY_V4 = new PublicKey('5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1');
+const JUPITER_AGGREGATOR_V6 = new PublicKey('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4');
+const JUPITER_AGGREGATOR_AUTHORITIES: PublicKey[] = [
+  new PublicKey('9nnLbotNTcUhvbrsA6Mdkx45Sm82G35zo28AqUvjExn8'),
+  new PublicKey('6U91aKa8pmMxkJwBCfPTmUEfZi6dHe7DcFq2ALvB2tbB'), //12
+  new PublicKey('6LXutJvKUw8Q5ue2gCgKHQdAN4suWW8awzFVC6XCguFx'), //5
+];
 const TOKEN_PROGRAM = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const SOL_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112');
 const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY || ''));
@@ -135,48 +144,64 @@ async function monitorNewToken() {
   try {
     await connection1.onLogs(
       TARGET_WALLET_ADDRESS,
-      // RAYDIUM_LIQUIDITYPOOL_V4, // This is for test
       async ({ logs, err, signature }) => {
         if (err) {
           return;
         }
 
-        // SmartFox Remove the unnecessary criteria
-        if (logs && logs.some((log) => log.includes(RAYDIUM_LIQUIDITYPOOL_V4.toString()))) {
-          // SmartFox Skip the error transaction
-          if (err) {
-            console.log(`${signature} is error transaction.`);
-            return;
-          }
+        // SmartFox Identify the dex
+        const dex = identifyDex(logs);
+        if (!dex) {
+          return;
+        }
 
-          // SmartFox Skip the already processed transaction
-          if (processedTransactionSignatures.includes(signature)) {
-            return;
-          }
+        // SmartFox Skip the already processed transaction
+        if (processedTransactionSignatures.includes(signature)) {
+          return;
+        }
 
-          // OB Get the transaction from signature
-          const transaction = await connection1.getParsedTransaction(signature, {
-            commitment: 'confirmed',
-            maxSupportedTransactionVersion: 0,
-          });
+        // OB Get the transaction from signature
+        const transaction = await connection1.getParsedTransaction(signature, {
+          commitment: 'confirmed',
+          maxSupportedTransactionVersion: 0,
+        });
 
-          // If no transaction
-          if (!transaction) {
-            return;
-          }
-          await processTransaction(transaction, signature);
+        // If no transaction
+        if (!transaction) {
+          return;
+        }
 
-          processedTransactionSignatures.push(signature);
-          // OB Remove the first item if the array exceed the limitation of length
-          if (processedTransactionSignatures.length > processedTransactionSignaturesLimitCount) {
-            processedTransactionSignatures.shift();
-          }
+        await processTransaction(transaction, signature, dex);
+
+        processedTransactionSignatures.push(signature);
+        processedTransactionSignatures.push(signature);
+        // OB Remove the first item if the array exceed the limitation of length
+        processedTransactionSignatures.push(signature);
+        // OB Remove the first item if the array exceed the limitation of length
+        if (processedTransactionSignatures.length > processedTransactionSignaturesLimitCount) {
+          processedTransactionSignatures.shift();
         }
       },
       'confirmed'
     );
   } catch (error) {
     console.error('Error while monitorNewToken:', error);
+  }
+}
+
+function identifyDex(logs: string[]) {
+  try {
+    if (!logs.length) return null;
+    if (logs.some((log) => log.includes(JUPITER_AGGREGATOR_V6.toString()))) {
+      return 'Jupiter';
+    }
+    if (logs.some((log) => log.includes(RAYDIUM_LIQUIDITYPOOL_V4.toString()))) {
+      return 'Raydium';
+    }
+    return null;
+  } catch (error) {
+    console.error('Error while identifying dex:', error);
+    return null;
   }
 }
 
@@ -217,75 +242,38 @@ async function monitorNewToken() {
  * Process specific transaction
  */
 
-async function processTransaction(transaction: ParsedTransactionWithMeta, signature: string) {
+async function processTransaction(transaction: ParsedTransactionWithMeta, signature: string, dex: string) {
   // SmartFox Analyze transaction, get poolAccount, solAccount and tokenAccount account
-  const { poolAccount, solAccount, tokenAccount } = await analyzeTransaction(transaction);
+  const analyze = await analyzeTransaction(transaction, signature, dex);
 
-  if (solAccount && tokenAccount && poolAccount) {
-    const trade = await getTradeSize(transaction, solAccount, tokenAccount);
-
-    // SmartFox log the detail information of swap transaction
-    if (trade.isBuy) {
-      logger({
-        type: 'Buy',
-        target_wallet: TARGET_WALLET_ADDRESS.toString(),
-        pool_address: poolAccount.toString(),
-        from: {
-          token_address: SOL_ADDRESS.toString(),
-          amount: trade.diffSol,
-        },
-        to: {
-          token_address: tokenAccount.toString(),
-          amount: trade.diffOther,
-        },
-        signature,
-      });
-    } else {
-      logger({
-        type: 'Sell',
-        target_wallet: TARGET_WALLET_ADDRESS.toString(),
-        pool_address: poolAccount.toString(),
-        from: {
-          token_address: tokenAccount.toString(),
-          amount: trade.diffOther,
-        },
-        to: {
-          token_address: SOL_ADDRESS.toString(),
-          amount: trade.diffSol,
-        },
-        signature,
-      });
-    }
-
-    // Skip trades below the minimum threshold
-    if (trade.diffSol < TARGET_WALLET_MIN_TRADE) {
-      logToFile(
-        'Skipped',
-        TARGET_WALLET_ADDRESS.toString(),
-        solAccount.toString(),
-        trade.diffSol.toString(),
-        'Below minimum trade size'
-      );
-      sound.play(soundFilePaths.buyTrade);
-      return;
-    }
-
-    logToFile(
-      'Buy Detected',
-      TARGET_WALLET_ADDRESS.toString(),
-      solAccount.toString(),
-      (trade.diffSol / 1_000_000_000).toString()
-    );
-    sound.play(soundFilePaths.buyTradeCopied);
-    const buy = await Buy(connection1, tokenAccount, poolAccount);
-
-    if (buy && buy.mint && buy.poolKeys) {
-      sound.play(soundFilePaths.sellTrade);
-      sellWithLimitOrder(connection2, buy.mint, buy.poolKeys);
-    }
-  } else {
+  if (!analyze) {
     console.info(`${signature} is not a swap transaction.`);
+    return;
   }
+
+  // SmartFox log the detail information of swap transaction
+  logger(analyze);
+
+  // Skip trades below the minimum threshold
+  // if (trade.diffSol < TARGET_WALLET_MIN_TRADE) {
+  //   logToFile(
+  //     'Skipped',
+  //     TARGET_WALLET_ADDRESS.toString(),
+  //     solAccount.toString(),
+  //     trade.diffSol.toString(),
+  //     'Below minimum trade size'
+  //   );
+  //   sound.play(soundFilePaths.buyTrade);
+  //   return;
+  // }
+
+  sound.play(soundFilePaths.buyTradeCopied);
+  // const buy = await Buy(connection1, tokenAccount, poolAccount);
+
+  // if (buy && buy.mint && buy.poolKeys) {
+  //   sound.play(soundFilePaths.sellTrade);
+  //   sellWithLimitOrder(connection2, buy.mint, buy.poolKeys);
+  // }
 }
 
 /**
@@ -329,45 +317,142 @@ async function getTradeSize(transaction: ParsedTransactionWithMeta, solAccount: 
  * @param signature
  * @returns
  */
-async function analyzeTransaction(transaction: ParsedTransactionWithMeta) {
+async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signature: string, dex: string) {
   let solAccount: PublicKey | undefined;
   let tokenAccount: PublicKey | undefined;
   let poolAccount: PublicKey | undefined;
+  try {
+    const instructions = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
 
-  // SmartFox Get all instructions from transaction
-  const instrs = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
-  const instrsWithAccs = instrs.filter((instr) => instr.accounts && instr.accounts.length > 0);
+    if (dex === 'Jupiter') {
+      const swapIxIdx = instructions.findIndex((ix) => {
+        return ix.programId.equals(JUPITER_AGGREGATOR_V6);
+      });
 
-  // SmartFox Loop until will find the account that its owner is RAYDIUM_LIQUIDITYPOOL_V4
-  outerLoop: for (const instr of instrsWithAccs) {
-    const accounts = instr.accounts;
-    for (const acc of accounts) {
-      const poolInfo = await connection1.getAccountInfo(acc, { commitment: 'confirmed' });
-
-      if (poolInfo?.owner.equals(RAYDIUM_LIQUIDITYPOOL_V4)) {
-        poolAccount = acc;
-        break outerLoop; // Exit the loop once the account is found
+      if (swapIxIdx === -1) {
+        return null;
       }
+      const transfers: any[] = [];
+      transaction.meta?.innerInstructions?.forEach((instruction) => {
+        if (instruction.index <= swapIxIdx) {
+          (instruction.instructions as ParsedInstruction[]).forEach((ix) => {
+            if (ix.parsed?.type === 'transfer' && ix.parsed.info.amount) {
+              transfers.push({
+                amount: ix.parsed.info.amount,
+                source: ix.parsed.info.source,
+                destination: ix.parsed.info.destination,
+              });
+            } else if (ix.parsed?.type === 'transferChecked' && ix.parsed.info.tokenAmount.amount) {
+              transfers.push({
+                amount: ix.parsed.info.tokenAmount.amount,
+                source: ix.parsed.info.source,
+                destination: ix.parsed.info.destination,
+              });
+            }
+          });
+        }
+      });
+
+      if (transfers.length === 0) {
+        return null;
+      }
+      console.log(transfers[transfers.length - 1]);
+
+      const [tokenIn, tokenOut] = await Promise.all([
+        getTokenMintAddress(transfers[0].source, transfers[0].destination),
+        getTokenMintAddress(transfers[transfers.length - 1].source, transfers[transfers.length - 1].destination),
+      ]);
+
+      return {
+        signature,
+        target_wallet: TARGET_WALLET_ADDRESS.toString(),
+        type:
+          tokenIn?.mint === SOL_ADDRESS.toString()
+            ? 'Buy'
+            : tokenOut?.mint === SOL_ADDRESS.toString()
+            ? 'Sell'
+            : 'Swap',
+        dex,
+        pool_address: '',
+        from: {
+          token_address: tokenIn?.mint as string,
+          amount: (transfers[0].amount as number) / 10 ** (tokenIn?.decimals || 0),
+        },
+        to: {
+          token_address: tokenOut?.mint as string,
+          amount: (transfers[transfers.length - 1].amount as number) / 10 ** (tokenOut?.decimals || 0),
+        },
+      };
+    } else {
+      // SmartFox Get all instructions from transaction
+      const instrsWithAccs = instructions.filter((ix) => ix.accounts && ix.accounts.length > 0);
+
+      // SmartFox Loop until will find the account that its owner is RAYDIUM_LIQUIDITYPOOL_V4
+      outerLoop: for (const ix of instrsWithAccs) {
+        const accounts = ix.accounts;
+        for (const acc of accounts) {
+          const poolInfo = await connection1.getAccountInfo(acc, { commitment: 'confirmed' });
+
+          if (poolInfo?.owner.equals(RAYDIUM_LIQUIDITYPOOL_V4)) {
+            poolAccount = acc;
+            break outerLoop; // Exit the loop once the account is found
+          }
+        }
+      }
+
+      if (!poolAccount) {
+        return null;
+      }
+
+      // OB Get information of pool account
+      const poolInfo = await connection1.getAccountInfo(poolAccount, { commitment: 'confirmed' });
+      if (!poolInfo) {
+        return null;
+      }
+
+      // OB Decode the data of information of pool account
+      const poolData = LIQUIDITY_STATE_LAYOUT_V4.decode(poolInfo?.data);
+      solAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.baseMint : poolData.quoteMint;
+      tokenAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.quoteMint : poolData.baseMint;
+
+      const trade = await getTradeSize(transaction, solAccount, tokenAccount);
+
+      return {
+        signature,
+        target_wallet: TARGET_WALLET_ADDRESS.toString(),
+        type: trade.isBuy ? 'Buy' : 'Sell',
+        dex,
+        pool_address: poolAccount.toString(),
+        from: {
+          token_address: solAccount.toString(),
+          amount: trade.diffSol,
+        },
+        to: {
+          token_address: tokenAccount.toString(),
+          amount: trade.diffOther,
+        },
+      };
     }
+  } catch (error) {
+    console.error(error);
+    return null;
   }
+}
 
-  if (!poolAccount) {
-    return { poolAccount, solAccount, tokenAccount };
+async function getTokenMintAddress(source: string, destination: string) {
+  try {
+    let accountInfo = await connection1.getParsedAccountInfo(new PublicKey(source));
+    if (!accountInfo.value) accountInfo = await connection1.getParsedAccountInfo(new PublicKey(destination));
+    console.log('getTokenMintAddress accountInfo.value?.data', accountInfo.value?.data, 'accAddr', source);
+    const tokenInfo = (accountInfo.value?.data as ParsedAccountData).parsed?.info;
+    return {
+      mint: tokenInfo?.mint || null,
+      decimals: Number(tokenInfo?.tokenAmount?.decimals),
+    };
+  } catch (error) {
+    console.error(error);
+    return null;
   }
-
-  // OB Get information of pool account
-  const poolInfo = await connection1.getAccountInfo(poolAccount, { commitment: 'confirmed' });
-  if (!poolInfo) {
-    return { poolAccount, solAccount, tokenAccount };
-  }
-
-  // OB Decode the data of information of pool account
-  const poolData = LIQUIDITY_STATE_LAYOUT_V4.decode(poolInfo?.data);
-
-  solAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.baseMint : poolData.quoteMint;
-  tokenAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.quoteMint : poolData.baseMint;
-
-  return { poolAccount, solAccount, tokenAccount };
 }
 
 async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
