@@ -413,10 +413,12 @@ async function getTokenMintAddress(source: string, destination: string) {
     if (!accountInfo.value) accountInfo = await connection1.getParsedAccountInfo(new PublicKey(destination));
     const tokenInfo = (accountInfo.value?.data as ParsedAccountData).parsed?.info;
     const tokenInfor = await getTokenInfo(connection1, new PublicKey(tokenInfo?.mint));
+    const symbol =
+      tokenInfor?.address !== SOL_ADDRESS.toString() && tokenInfor?.symbol === 'SOL' ? 'SPL Token' : tokenInfor?.symbol;
     return {
       mint: tokenInfo?.mint || null,
       decimals: Number(tokenInfo?.tokenAmount?.decimals),
-      symbol: tokenInfor?.symbol,
+      symbol,
     };
   } catch (error) {
     console.error(error);
