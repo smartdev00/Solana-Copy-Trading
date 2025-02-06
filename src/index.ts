@@ -33,7 +33,7 @@ import {
   getAssociatedTokenAddressSync,
   decodeTransferInstruction,
 } from '@solana/spl-token';
-import { logger, roundToDecimal } from './utils';
+import { AnalyzeType, logger, roundToDecimal } from './utils';
 
 // Process command-line arguments
 // The app requires strictly one command-line argument which must be a path to configuration file
@@ -174,9 +174,6 @@ async function monitorNewToken() {
         await processTransaction(transaction, signature, dex);
 
         processedTransactionSignatures.push(signature);
-        processedTransactionSignatures.push(signature);
-        // OB Remove the first item if the array exceed the limitation of length
-        processedTransactionSignatures.push(signature);
         // OB Remove the first item if the array exceed the limitation of length
         if (processedTransactionSignatures.length > processedTransactionSignaturesLimitCount) {
           processedTransactionSignatures.shift();
@@ -204,39 +201,6 @@ function identifyDex(logs: string[]) {
     return null;
   }
 }
-
-/*
- * Primary function invoked by main loop and calling all subsequent functions during its work
- */
-
-// async function trackTargetWallet() {
-//   let signatures;
-
-//   try {
-//     signatures = await connection1.getSignaturesForAddress(TARGET_WALLET_ADDRESS, {
-//       limit: signaturesForAddressLimitCount,
-//     });
-//     console.log('signatures:', signatures);
-//   } catch (error: any) {
-//     console.error('Error fetching signatures:', error.cause);
-//     return;
-//   }
-
-//   for (const signatureInfo of signatures) {
-//     // Send for processing only unprocessed transactions
-//     // Do not send transactions created before app launch
-//     if (
-//       signatureInfo.blockTime &&
-//       signatureInfo.blockTime > appStartedAtSeconds &&
-//       !processedTransactionSignatures.includes(signatureInfo.signature)
-//     ) {
-//       await processTransaction(signatureInfo);
-//       processedTransactionSignatures.push(signatureInfo.signature);
-//       if (processedTransactionSignatures.length > processedTransactionSignaturesLimitCount)
-//         processedTransactionSignatures.shift(); // Remove first value to keep this list relatively short
-//     }
-//   }
-// }
 
 /*
  * Process specific transaction
@@ -356,7 +320,6 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
       if (transfers.length === 0) {
         return null;
       }
-      console.log(transfers[transfers.length - 1]);
 
       const [tokenIn, tokenOut] = await Promise.all([
         getTokenMintAddress(transfers[0].source, transfers[0].destination),
@@ -377,12 +340,14 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
         from: {
           token_address: tokenIn?.mint as string,
           amount: (transfers[0].amount as number) / 10 ** (tokenIn?.decimals || 0),
+          symbol: tokenIn?.symbol,
         },
         to: {
           token_address: tokenOut?.mint as string,
           amount: (transfers[transfers.length - 1].amount as number) / 10 ** (tokenOut?.decimals || 0),
+          symbol: tokenOut?.symbol,
         },
-      };
+      } as AnalyzeType;
     } else {
       // SmartFox Get all instructions from transaction
       const instrsWithAccs = instructions.filter((ix) => ix.accounts && ix.accounts.length > 0);
@@ -416,6 +381,7 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
       tokenAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.quoteMint : poolData.baseMint;
 
       const trade = await getTradeSize(transaction, solAccount, tokenAccount);
+      const tokenInfor = await getTokenInfo(connection1, tokenAccount);
 
       return {
         signature,
@@ -426,12 +392,14 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
         from: {
           token_address: solAccount.toString(),
           amount: trade.diffSol,
+          symbol: trade.isBuy ? 'SOL' : tokenInfor?.symbol,
         },
         to: {
           token_address: tokenAccount.toString(),
           amount: trade.diffOther,
+          symbol: !trade.isBuy ? 'SOL' : tokenInfor?.symbol,
         },
-      };
+      } as AnalyzeType;
     }
   } catch (error) {
     console.error(error);
@@ -444,9 +412,13 @@ async function getTokenMintAddress(source: string, destination: string) {
     let accountInfo = await connection1.getParsedAccountInfo(new PublicKey(source));
     if (!accountInfo.value) accountInfo = await connection1.getParsedAccountInfo(new PublicKey(destination));
     const tokenInfo = (accountInfo.value?.data as ParsedAccountData).parsed?.info;
+    const tokenInfor = await getTokenInfo(connection1, new PublicKey(tokenInfo?.mint));
+    const symbol =
+      tokenInfor?.address !== SOL_ADDRESS.toString() && tokenInfor?.symbol === 'SOL' ? 'SPL Token' : tokenInfor?.symbol;
     return {
       mint: tokenInfo?.mint || null,
       decimals: Number(tokenInfo?.tokenAmount?.decimals),
+      symbol,
     };
   } catch (error) {
     console.error(error);
@@ -694,39 +666,17 @@ function logToFile(action: string, wallet: string, token: string, amount: string
   fs.appendFileSync(LOG_FILE, logEntry);
 }
 
-// OB get token price
-async function getTokenPrice(mintAddress: string) {
-  try {
-    if (mintAddress === SOL_ADDRESS.toString()) {
-      return 1;
-    }
-    const response = await fetch(`https://api.jup.ag/price/v2?ids=${mintAddress},${SOL_ADDRESS.toString()}`, {
-      method: 'get',
-      redirect: 'follow',
-    });
-    const { data } = await response.json();
-    return Number(data[mintAddress]?.price) / Number(data[SOL_ADDRESS.toString()]?.price);
-  } catch (error) {
-    console.error('Error while getTokenPrice:', error);
-    throw new Error('Error while getTokenPrice');
-  }
-}
-
 // OB get token info
-export async function getTokenInfo(connection: Connection, mintAddress: string) {
+export async function getTokenInfo(connection: Connection, mint: PublicKey) {
   const metaplex = Metaplex.make(connection);
-
-  const mint = new PublicKey(mintAddress);
 
   try {
     const tokenMetadata = await metaplex.nfts().findByMint({ mintAddress: mint });
-    const price = await getTokenPrice(mintAddress);
     return {
       name: tokenMetadata.name,
       symbol: tokenMetadata.symbol,
       address: tokenMetadata.address.toString(),
       decimals: tokenMetadata.mint.decimals,
-      price,
     };
   } catch (error) {
     console.error('Error fetching token metadata:', error);
