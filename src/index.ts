@@ -33,7 +33,7 @@ import {
   createCloseAccountInstruction,
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token';
-import { AnalyzeType, logLine, logger, roundToDecimal } from './utils';
+import { AnalyzeType, logBuyOrSellTrigeer, logError, logLine, logSkipped, logger, roundToDecimal } from './utils';
 
 // Process command-line arguments
 // The app requires strictly one command-line argument which must be a path to configuration file
@@ -124,7 +124,7 @@ const processedTransactionSignaturesLimitCount = signaturesForAddressLimitCount 
 let buyTokenList: PublicKey[] = [];
 
 async function monitorNewToken() {
-  console.info(chalk.bgWhite.black(' 🛠  BOT INITIALIZED '));
+  console.info(chalk.bgWhite.black('       🛠  BOT INITIALIZED       '));
   console.log('🔍 Monitoring Target Wallet:', chalk.magenta(TARGET_WALLET_ADDRESS.toString()));
   console.info(
     `🔷 Min Trade Size: ${chalk.yellow(TARGET_WALLET_MIN_TRADE / LAMPORTS_PER_SOL)} SOL | Trading Amount:`,
@@ -214,8 +214,7 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 
   // Skip trades below the minimum threshold
   if (solDiff !== 0 && solDiff * LAMPORTS_PER_SOL < TARGET_WALLET_MIN_TRADE) {
-    console.log(`${chalk.yellow('⚠ Skipped Trade')}: Below Minimum Trade Size (${solDiff} SOL)`);
-    logLine();
+    logSkipped(solDiff);
     sound.play(soundFilePaths.buyTrade);
     return;
   }
@@ -468,17 +467,17 @@ async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
       );
 
       if (confirmStatus.value.err == null) {
-        logToFile('Bot Buy', WALLET.publicKey.toString(), mint.toString(), (TRADE_AMOUNT / 1_000_000_000).toString());
-        buyTokenList.push(mint);
         console.log(`Buy: buy token - ${res}`);
+        logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, 1500, 'HOOD');
+        buyTokenList.push(mint);
         return { mint: mint, poolKeys: poolKeys };
       } else {
         return null;
       }
     }
   } catch (error) {
-    logToFile('Error', WALLET.publicKey.toString(), mint?.toString() || 'Unknown', '0', 'Error: buy on raydium');
     console.log('Error: buy on raydium', error);
+    logError();
     return null;
   }
 }
@@ -521,7 +520,7 @@ async function sellWithLimitOrder(connection: Connection, mint: PublicKey, poolK
       await sleep(100);
     }
   } catch {
-    console.log('empty token balance');
+    logError();
     return null;
   }
 }
@@ -558,6 +557,7 @@ async function sellAllToken(connection: Connection, pool: PublicKey, mint: Publi
     versionedNewTokenTransaction.sign([WALLET]);
     const res = await connection.sendRawTransaction(versionedNewTokenTransaction.serialize(), { skipPreflight: true });
     console.log(`Sell: sell token - ${res}`);
+    logBuyOrSellTrigeer(false, 0.058, 100, 'HOOD', '+12');
   }
 }
 
@@ -677,6 +677,4 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// setInterval(trackTargetWallet, 5000);
-// trackTargetWallet();
 monitorNewToken();
