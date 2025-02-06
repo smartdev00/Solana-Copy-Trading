@@ -20,14 +20,13 @@ import {
   LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
 import {
-  LIQUIDITY_STATE_LAYOUT_V4,
-  Liquidity,
+  liquidityStateV4Layout,
   MARKET_STATE_LAYOUT_V3,
   SPL_MINT_LAYOUT,
   LiquidityPoolKeys,
   Market,
-} from '@raydium-io/raydium-sdk';
-
+  Raydium,
+} from '@raydium-io/raydium-sdk-v2';
 import {
   createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
@@ -35,24 +34,7 @@ import {
 } from '@solana/spl-token';
 import { AnalyzeType, logBuyOrSellTrigeer, logError, logLine, logSkipped, logger, roundToDecimal } from './utils';
 
-// Process command-line arguments
-// The app requires strictly one command-line argument which must be a path to configuration file
-// For example `npm run start config.env`
-if (process.argv.length !== 3) {
-  console.error('Error launching app:');
-  console.error('Application requires exactly one command-line parameter which must be a path to configuration file.');
-  console.error('For example `npm run start config.env`');
-  process.exit();
-}
-
-// Check configuration file and initialize environment variables
-const pathToConfigurationFile = path.join(__dirname, process.argv[2]);
-if (!fs.existsSync(pathToConfigurationFile)) {
-  console.error('Error launching app:');
-  console.error(`Configuration file ${pathToConfigurationFile} not found.`);
-  process.exit();
-}
-dotenv.config({ path: pathToConfigurationFile });
+dotenv.config({ path: './.env' });
 
 // Initialize parameters from environment variables
 const connection1 = new Connection(process.env.CONNECTION_URL_1 || '', {
@@ -132,6 +114,7 @@ async function monitorNewToken() {
     'SOL'
   );
   console.log(chalk.gray('-------------------------------------------------------------------------'));
+  // let pool = false;
 
   try {
     await connection1.onLogs(
@@ -140,6 +123,12 @@ async function monitorNewToken() {
         if (err) {
           return;
         }
+
+        // if (pool === true) {
+        //   return;
+        // }
+
+        // pool = true;
 
         // SmartFox Identify the dex
         const dex = identifyDex(logs);
@@ -220,9 +209,13 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
   }
   logLine();
 
-  sound.play(soundFilePaths.buyTradeCopied);
+  // sound.play(soundFilePaths.buyTradeCopied);
 
-  // const buy = await Buy(connection1, tokenAccount, poolAccount);
+  let buy;
+  if (analyze.type === 'Buy' && analyze.dex === 'Raydium') {
+    buy = await Buy(connection1, new PublicKey(analyze.to.token_address), new PublicKey(analyze.pool_address));
+  }
+  console.log('buy:', buy);
 
   // if (buy && buy.mint && buy.poolKeys) {
   //   sound.play(soundFilePaths.sellTrade);
@@ -365,7 +358,7 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
       }
 
       // OB Decode the data of information of pool account
-      const poolData = LIQUIDITY_STATE_LAYOUT_V4.decode(poolInfo?.data);
+      const poolData = liquidityStateV4Layout.decode(poolInfo?.data);
       solAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.baseMint : poolData.quoteMint;
       tokenAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.quoteMint : poolData.baseMint;
 
@@ -418,18 +411,17 @@ async function getTokenMintAddress(source: string, destination: string) {
 async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
   try {
     if (buyTokenList.includes(mint)) {
-      logToFile(
-        'Skipped',
-        WALLET.publicKey.toString(),
-        mint.toString(),
-        (TRADE_AMOUNT / 1_000_000_000).toString(),
-        'Token already purchased'
-      );
       console.log('Token: already purchased this token!');
       return;
     }
 
+    const raydium = await Raydium.load({
+      connection: connection1,
+      owner: WALLET,
+    });
+
     const poolKeys = await getLiquidityV4PoolKeys(connection, pool);
+
     if (poolKeys) {
       const swapInst = await getSwapTokenGivenInInstructions(
         WALLET.publicKey,
@@ -437,6 +429,7 @@ async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
         SOL_ADDRESS,
         BigInt(TRADE_AMOUNT)
       );
+
       let buyInsts: TransactionInstruction[] = [];
       buyInsts.push(
         ComputeBudgetProgram.setComputeUnitPrice({
@@ -445,21 +438,26 @@ async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
         ComputeBudgetProgram.setComputeUnitLimit({ units: 75000 }),
         ...swapInst
       );
+
       let latestBlock = await connection.getLatestBlockhash();
+
       const newTokenTransactionMessage = new TransactionMessage({
         payerKey: WALLET.publicKey,
         recentBlockhash: latestBlock.blockhash,
         instructions: buyInsts,
       }).compileToV0Message();
+
       const versionedNewTokenTransaction = new VersionedTransaction(newTokenTransactionMessage);
       versionedNewTokenTransaction.sign([WALLET]);
-      const res = await connection.sendRawTransaction(versionedNewTokenTransaction.serialize(), {
+
+      const signature = await connection.sendRawTransaction(versionedNewTokenTransaction.serialize(), {
         skipPreflight: false,
       });
-      console.log('SendRawTransaction: ', res);
+      console.log('SendRawTransaction: ', signature);
+
       const confirmStatus = await connection.confirmTransaction(
         {
-          signature: res,
+          signature: signature,
           lastValidBlockHeight: latestBlock.lastValidBlockHeight,
           blockhash: latestBlock.blockhash,
         },
@@ -467,7 +465,7 @@ async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
       );
 
       if (confirmStatus.value.err == null) {
-        console.log(`Buy: buy token - ${res}`);
+        console.log(`Buy: buy token - ${signature}`);
         logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, 1500, 'HOOD');
         buyTokenList.push(mint);
         return { mint: mint, poolKeys: poolKeys };
@@ -565,7 +563,7 @@ async function getLiquidityV4PoolKeys(connection: Connection, pool: PublicKey) {
   try {
     const poolAccount = await connection.getAccountInfo(pool, 'confirmed');
     if (!poolAccount) return null;
-    const poolInfo = LIQUIDITY_STATE_LAYOUT_V4.decode(poolAccount.data);
+    const poolInfo = liquidityStateV4Layout.decode(poolAccount.data);
     if (
       poolInfo.baseMint.toString() != SOL_ADDRESS.toString() &&
       poolInfo.quoteMint.toString() != SOL_ADDRESS.toString()
@@ -628,8 +626,10 @@ async function getSwapTokenGivenInInstructions(
   _amountIn: bigint
 ) {
   const tokenOut = tokenIn.equals(poolKeys.baseMint) ? poolKeys.quoteMint : poolKeys.baseMint;
+
   const tokenInATA = getAssociatedTokenAddressSync(tokenIn, owner);
   const tokenOutATA = getAssociatedTokenAddressSync(tokenOut, owner);
+
   const { innerTransaction } = Liquidity.makeSwapFixedInInstruction(
     {
       poolKeys: poolKeys,
@@ -643,6 +643,7 @@ async function getSwapTokenGivenInInstructions(
     },
     poolKeys.version
   );
+
   return [
     createAssociatedTokenAccountIdempotentInstruction(owner, tokenOutATA, owner, tokenOut),
     ...innerTransaction.instructions,
