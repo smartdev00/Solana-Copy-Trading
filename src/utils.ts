@@ -18,30 +18,40 @@ export type AnalyzeType = {
   };
 };
 
+export const logLine = () => {
+  console.log(
+    chalk.gray(
+      '---------------------------------------------------------------------------------------------------------------------'
+    )
+  );
+};
+
 export const logger = (data: AnalyzeType) => {
+  const currentDate = new Date(Date.now());
+  const timestamp = currentDate.toLocaleTimeString().replace(' PM', '').replace(' AM', '');
+
   if (data.type === 'Buy') {
     console.log(
       `🟢 ${chalk.green.bold('[BUY]')} ${data.to.amount} ${chalk.yellow(data.to.symbol)} ➡ ${
         data.from.amount
-      } ${chalk.yellow('SOL')}`
+      } ${chalk.yellow('SOL')} ${chalk.gray(`[${timestamp}]`)}`
     );
   } else if (data.type === 'Sell') {
     console.log(
       `🔴 ${chalk.red.bold('[SELL]')} ${data.from.amount} ${chalk.yellow(data.from.symbol)} ➡ ${
         data.to.amount
-      } ${chalk.yellow('SOL')}`
+      } ${chalk.yellow('SOL')} ${chalk.gray(`[${timestamp}]`)}`
     );
   } else {
     console.log(
       `⚪ ${chalk.gray.bold('[SWAP]')} ${data.from.amount} ${chalk.yellow(data.from.symbol)} ➡ ${
         data.to.amount
-      } ${chalk.yellow(data.to.symbol)}`
+      } ${chalk.yellow(data.to.symbol)} ${chalk.gray(`[${timestamp}]`)}`
     );
   }
   console.log(`📍 DEX: ${chalk.blue(data.dex)}`);
   console.log(`📝 TX: ${chalk.cyan(`https://solscan.io/tx/${data.signature}`)}`);
   console.log(`🤵 Wallet: ${chalk.magenta(`https://solscan.io/account/${data.target_wallet}`)}`);
-  console.log(chalk.gray('----------------------------------------------------------------------------------'));
 };
 
 export const roundToDecimal = (value: number, decimals = 9): number => {

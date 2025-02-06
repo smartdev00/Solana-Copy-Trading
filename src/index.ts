@@ -3,8 +3,8 @@ import path from 'path';
 import fs from 'fs';
 import sound from 'sound-play';
 import bs58 from 'bs58';
-import fetch from 'cross-fetch';
-import { Metaplex, amount } from '@metaplex-foundation/js';
+import chalk from 'chalk';
+import { Metaplex } from '@metaplex-foundation/js';
 import {
   Keypair,
   PublicKey,
@@ -17,6 +17,7 @@ import {
   PartiallyDecodedInstruction,
   ParsedInstruction,
   ParsedAccountData,
+  LAMPORTS_PER_SOL,
 } from '@solana/web3.js';
 import {
   LIQUIDITY_STATE_LAYOUT_V4,
@@ -31,14 +32,12 @@ import {
   createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
   getAssociatedTokenAddressSync,
-  decodeTransferInstruction,
 } from '@solana/spl-token';
-import { AnalyzeType, logger, roundToDecimal } from './utils';
+import { AnalyzeType, logLine, logger, roundToDecimal } from './utils';
 
 // Process command-line arguments
 // The app requires strictly one command-line argument which must be a path to configuration file
 // For example `npm run start config.env`
-
 if (process.argv.length !== 3) {
   console.error('Error launching app:');
   console.error('Application requires exactly one command-line parameter which must be a path to configuration file.');
@@ -47,7 +46,6 @@ if (process.argv.length !== 3) {
 }
 
 // Check configuration file and initialize environment variables
-
 const pathToConfigurationFile = path.join(__dirname, process.argv[2]);
 if (!fs.existsSync(pathToConfigurationFile)) {
   console.error('Error launching app:');
@@ -57,7 +55,6 @@ if (!fs.existsSync(pathToConfigurationFile)) {
 dotenv.config({ path: pathToConfigurationFile });
 
 // Initialize parameters from environment variables
-
 const connection1 = new Connection(process.env.CONNECTION_URL_1 || '', {
   wsEndpoint: process.env.CONNECTION_WSS_URL_1,
   commitment: 'confirmed',
@@ -71,12 +68,6 @@ const TARGET_WALLET_MIN_TRADE = parseInt(process.env.TARGET_WALLET_MIN_TRADE || 
 const RAYDIUM_LIQUIDITYPOOL_V4 = new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8');
 const RAYDIUM_AUTHORITY_V4 = new PublicKey('5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1');
 const JUPITER_AGGREGATOR_V6 = new PublicKey('JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4');
-const JUPITER_AGGREGATOR_AUTHORITIES: PublicKey[] = [
-  new PublicKey('9nnLbotNTcUhvbrsA6Mdkx45Sm82G35zo28AqUvjExn8'),
-  new PublicKey('6U91aKa8pmMxkJwBCfPTmUEfZi6dHe7DcFq2ALvB2tbB'), //12
-  new PublicKey('6LXutJvKUw8Q5ue2gCgKHQdAN4suWW8awzFVC6XCguFx'), //5
-];
-const TOKEN_PROGRAM = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
 const SOL_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112');
 const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY || ''));
 const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
@@ -91,12 +82,6 @@ const soundFilePaths = {
   sellTrade: path.join(__dirname, '../sounds/bot-sell-trade.mp3'),
   sellTradeCopied: path.join(__dirname, '../sounds/bot-sell-trade-copied.mp3'),
 };
-
-const LAMPORTS_IN_SOL = 1_000_000_000;
-
-// Confirm the bot started working
-console.info('Target wallet minimal trade size', TARGET_WALLET_MIN_TRADE / LAMPORTS_IN_SOL, 'SOL');
-console.info('Trading amount', TRADE_AMOUNT / LAMPORTS_IN_SOL, 'SOL');
 
 // sound.play(soundFilePaths.botStart);
 
@@ -139,8 +124,15 @@ const processedTransactionSignaturesLimitCount = signaturesForAddressLimitCount 
 let buyTokenList: PublicKey[] = [];
 
 async function monitorNewToken() {
-  console.log('Monitoring wallet:', TARGET_WALLET_ADDRESS.toString());
-  let loop = true;
+  console.info(chalk.bgWhite.black(' 🛠  BOT INITIALIZED '));
+  console.log('🔍 Monitoring Target Wallet:', chalk.magenta(TARGET_WALLET_ADDRESS.toString()));
+  console.info(
+    `🔷 Min Trade Size: ${chalk.yellow(TARGET_WALLET_MIN_TRADE / LAMPORTS_PER_SOL)} SOL | Trading Amount:`,
+    TRADE_AMOUNT / LAMPORTS_PER_SOL,
+    'SOL'
+  );
+  console.log(chalk.gray('-------------------------------------------------------------------------'));
+
   try {
     await connection1.onLogs(
       TARGET_WALLET_ADDRESS,
@@ -215,23 +207,22 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
     return;
   }
 
-  // SmartFox log the detail information of swap transaction
   logger(analyze);
+  let solDiff = 0;
+  if (analyze.type === 'Buy') solDiff = analyze.from.amount;
+  if (analyze.type === 'Sell') solDiff = analyze.to.amount;
 
   // Skip trades below the minimum threshold
-  // if (trade.diffSol < TARGET_WALLET_MIN_TRADE) {
-  //   logToFile(
-  //     'Skipped',
-  //     TARGET_WALLET_ADDRESS.toString(),
-  //     solAccount.toString(),
-  //     trade.diffSol.toString(),
-  //     'Below minimum trade size'
-  //   );
-  //   sound.play(soundFilePaths.buyTrade);
-  //   return;
-  // }
+  if (solDiff !== 0 && solDiff * LAMPORTS_PER_SOL < TARGET_WALLET_MIN_TRADE) {
+    console.log(`${chalk.yellow('⚠ Skipped Trade')}: Below Minimum Trade Size (${solDiff} SOL)`);
+    logLine();
+    sound.play(soundFilePaths.buyTrade);
+    return;
+  }
+  logLine();
 
   sound.play(soundFilePaths.buyTradeCopied);
+
   // const buy = await Buy(connection1, tokenAccount, poolAccount);
 
   // if (buy && buy.mint && buy.poolKeys) {
@@ -241,9 +232,8 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 }
 
 /**
- * Obtains trade size for transaction with specified signature
+ * Obtains trade size for transaction with specified transaction
  */
-// SmartFox Calculate correctly the trade size and confirm whether tx is buy or sell
 async function getTradeSize(transaction: ParsedTransactionWithMeta, solAccount: PublicKey, otherAccount: PublicKey) {
   const postTokenBalances = transaction.meta?.postTokenBalances;
   const preTokenBalances = transaction.meta?.preTokenBalances;
