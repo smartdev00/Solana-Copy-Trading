@@ -6,7 +6,6 @@ export async function getQuoteForSwap(inputAddr: string, outputAddr: string, amo
       `https://quote-api.jup.ag/v6/quote?inputMint=${inputAddr}&outputMint=${outputAddr}&amount=${amount}&slippageBps=${slippageBps}`
     );
     const quote: any = await response.json();
-    console.log('jupiter quote:', quote);
     if (quote.error) {
       throw new Error(quote.message);
     }

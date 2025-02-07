@@ -35,9 +35,11 @@ import {
   createCloseAccountInstruction,
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token';
-import { AnalyzeType, logBuyOrSellTrigeer, logError, logLine, logSkipped, logger, roundToDecimal } from './utils';
+import { logBuyOrSellTrigeer, logError, logLine, logSkipped, logger, roundToDecimal } from './utils';
 import { BN } from '@coral-xyz/anchor';
+import BigNumber from 'bignumber.js';
 import { executeTransaction, getDeserialize, getQuoteForSwap, getSerializedTransaction } from './jupiter';
+import { TokenListType, AnalyzeType } from './types';
 
 dotenv.config({ path: './.env' });
 
@@ -108,7 +110,7 @@ const processedTransactionSignatures: string[] = [];
  */
 const processedTransactionSignaturesLimitCount = signaturesForAddressLimitCount * 10;
 
-let buyTokenList: PublicKey[] = [];
+let buyTokenList: TokenListType[] = [];
 
 async function monitorNewToken() {
   console.info(chalk.bgWhite.black('       🛠  BOT INITIALIZED       '));
@@ -215,69 +217,202 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
   logLine();
 
   // sound.play(soundFilePaths.buyTradeCopied);
-  const mintOut = new PublicKey(analyze.to.token_address);
 
-  let buy: { success: boolean; outAmount: number | any; signature: string | null } = {
+  let swapResult: { success: boolean; signature: string | null } = {
     success: false,
-    outAmount: 0,
     signature: null,
   };
 
-  if (analyze.type === 'Buy' && analyze.dex === 'Raydium') {
-    buy = await raydiumSwap(SOL_ADDRESS, new PublicKey(analyze.pool_address));
-  } else if (analyze.type === 'Buy' && analyze.dex === 'Jupiter') {
-    buy = await jupiterSwap(SOL_ADDRESS, mintOut);
-  }
+  // Copy the buy action of target wallet
+  if (analyze.type === 'Buy') {
+    const mintOut = new PublicKey(analyze.to.token_address);
 
-  if (buy.success && buy.outAmount) {
-    logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, buy.outAmount, analyze.to.symbol);
-    buyTokenList.push(mintOut);
-  }
+    // Execute the purchase transaction
+    if (analyze.dex === 'Raydium') {
+      swapResult = await raydiumSwap(SOL_ADDRESS, new PublicKey(analyze.pool_address));
+    } else if (analyze.dex === 'Jupiter') {
+      swapResult = await jupiterSwap(SOL_ADDRESS, mintOut);
+    }
 
-  // if (buy && buy.mint && buy.poolKeys) {
-  //   sound.play(soundFilePaths.sellTrade);
-  //   sellWithLimitOrder(connection2, buy.mint, buy.poolKeys);
-  // }
+    // If purchase succeeds
+    if (swapResult.success && swapResult.signature) {
+      const transaction = await connection1.getParsedTransaction(swapResult.signature, 'confirmed');
+      if (!transaction) {
+        return;
+      }
+      const swapSize = await getTradeSize(transaction, analyze.dex, SOL_ADDRESS, mintOut);
+
+      // Add token to buy token list
+      buyTokenList.push({
+        mint: mintOut,
+        amount: swapSize.diffOther,
+        fee: swapSize.diffSol - TRADE_AMOUNT / LAMPORTS_PER_SOL,
+        sold: false,
+      });
+
+      logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, swapSize.diffOther, analyze.to.symbol); // Log the purchase success message
+
+      // If purchase failed
+    } else {
+      logError('Purchase failed');
+    }
+
+    // Copy the sell action of target wallet
+  } else if (analyze.type === 'Sell') {
+    const mintIn = new PublicKey(analyze.from.token_address);
+
+    // Skip if you never bought this token
+    if (!buyTokenList.some((token) => token.mint.equals(mintIn))) {
+      return;
+    }
+
+    // Execute swap
+    if (analyze.dex === 'Raydium') {
+      swapResult = await raydiumSwap(mintIn, new PublicKey(analyze.pool_address));
+    } else if (analyze.dex === 'Jupiter') {
+      swapResult = await jupiterSwap(mintIn, SOL_ADDRESS);
+    }
+
+    // If sale succeeds
+    if (swapResult.success && swapResult.signature) {
+      const transaction = await connection1.getParsedTransaction(swapResult.signature, 'confirmed');
+      if (!transaction) {
+        return;
+      }
+      const swapSize = await getTradeSize(transaction, analyze.dex, SOL_ADDRESS, mintIn);
+
+      // Find the index of token in token list
+      const index = buyTokenList.findIndex((token) => token.mint.equals(mintIn));
+      if (index !== -1) {
+        const usedSol = TRADE_AMOUNT / LAMPORTS_PER_SOL + buyTokenList[index].fee;
+        const pl = ((swapSize.diffSol - usedSol) * 100) / usedSol;
+        logBuyOrSellTrigeer(false, swapSize.diffSol, buyTokenList[index].amount, analyze.to.symbol, pl.toString()); // Log sale success message
+        buyTokenList.splice(index, 1); // Remove the token from buy list
+      }
+
+      // If sale failed
+    } else {
+      logError('Sale failed');
+    }
+  }
 }
 
 /**
  * Obtains trade size for transaction with specified transaction
  */
-async function getTradeSize(transaction: ParsedTransactionWithMeta, solAccount: PublicKey, otherAccount: PublicKey) {
-  const postTokenBalances = transaction.meta?.postTokenBalances;
-  const preTokenBalances = transaction.meta?.preTokenBalances;
+async function getTradeSize(
+  transaction: ParsedTransactionWithMeta,
+  dex: string,
+  solAccount?: PublicKey,
+  otherAccount?: PublicKey
+) {
+  if (dex === 'Raydium') {
+    const postTokenBalances = transaction.meta?.postTokenBalances?.filter(
+      (post) => post.owner === RAYDIUM_AUTHORITY_V4.toString()
+    );
+    const preTokenBalances = transaction.meta?.preTokenBalances?.filter(
+      (pre) => pre.owner === RAYDIUM_AUTHORITY_V4.toString()
+    );
 
-  const decimals =
-    postTokenBalances?.find(
-      (post) => post.mint === otherAccount.toString() && post.owner === RAYDIUM_AUTHORITY_V4.toString()
-    )?.uiTokenAmount.decimals || 0;
+    const decimals = postTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.decimals || 0;
 
-  const diffSol =
-    (postTokenBalances?.find(
-      (post) => post.mint === solAccount.toString() && post.owner === RAYDIUM_AUTHORITY_V4.toString()
-    )?.uiTokenAmount.uiAmount || 0) -
-    (preTokenBalances?.find(
-      (pre) => pre.mint === solAccount.toString() && pre.owner === RAYDIUM_AUTHORITY_V4.toString()
-    )?.uiTokenAmount.uiAmount || 0);
+    const diffSol = new BigNumber(
+      postTokenBalances?.find((p) => p.mint === solAccount?.toString())?.uiTokenAmount.uiAmount || 0
+    )
+      .minus(
+        new BigNumber(preTokenBalances?.find((p) => p.mint === solAccount?.toString())?.uiTokenAmount.uiAmount || 0)
+      )
+      .toNumber();
 
-  const diffOther =
-    (postTokenBalances?.find(
-      (post) => post.mint === otherAccount.toString() && post.owner === RAYDIUM_AUTHORITY_V4.toString()
-    )?.uiTokenAmount.uiAmount || 0) -
-    (preTokenBalances?.find(
-      (pre) => pre.mint === otherAccount.toString() && pre.owner === RAYDIUM_AUTHORITY_V4.toString()
-    )?.uiTokenAmount.uiAmount || 0);
+    const diffOther = new BigNumber(
+      postTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0
+    )
+      .minus(
+        new BigNumber(preTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0)
+      )
+      .toNumber();
 
-  return {
-    diffSol: Math.abs(roundToDecimal(diffSol)),
-    diffOther: Math.abs(roundToDecimal(diffOther, decimals)),
-    isBuy: diffSol > 0 ? true : false,
-  };
+    console.log(
+      '11111111',
+      postTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0
+    );
+    console.log(
+      '22222222',
+      preTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0
+    );
+    console.log(diffSol, diffOther);
+
+    return {
+      diffSol: Math.abs(roundToDecimal(diffSol)),
+      diffOther: Math.abs(roundToDecimal(diffOther, decimals)),
+      isBuy: diffSol > 0 ? true : false,
+    };
+  } else {
+    const transfers = getJupiterTransfers(transaction);
+
+    const [tokenIn, tokenOut] = await Promise.all([
+      getTokenMintAddress(transfers[0].source, transfers[0].destination),
+      getTokenMintAddress(transfers[1].source, transfers[1].destination),
+    ]);
+
+    const diffSol =
+      tokenIn?.mint === SOL_ADDRESS.toString()
+        ? (transfers[0].amount as number) / LAMPORTS_PER_SOL
+        : (transfers[1].amount as number) / LAMPORTS_PER_SOL;
+
+    const diffOther =
+      tokenIn?.mint === SOL_ADDRESS.toString()
+        ? (transfers[1].amount as number) / 10 ** (tokenOut?.decimals || 0)
+        : (transfers[0].amount as number) / 10 ** (tokenIn?.decimals || 0);
+
+    return {
+      diffSol: Math.abs(roundToDecimal(diffSol)),
+      diffOther: Math.abs(roundToDecimal(diffOther)),
+      isBuy: diffSol > 0 ? true : false,
+    };
+  }
+}
+
+function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
+  const instructions = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
+  const swapIxIdx = instructions.findIndex((ix) => {
+    return ix.programId.equals(JUPITER_AGGREGATOR_V6);
+  });
+
+  if (swapIxIdx === -1) {
+    return [];
+  }
+
+  const transfers: any[] = [];
+  transaction.meta?.innerInstructions?.forEach((instruction) => {
+    if (instruction.index <= swapIxIdx) {
+      (instruction.instructions as ParsedInstruction[]).forEach((ix) => {
+        if (ix.parsed?.type === 'transfer' && ix.parsed.info.amount) {
+          transfers.push({
+            amount: ix.parsed.info.amount,
+            source: ix.parsed.info.source,
+            destination: ix.parsed.info.destination,
+          });
+        } else if (ix.parsed?.type === 'transferChecked' && ix.parsed.info.tokenAmount.amount) {
+          transfers.push({
+            amount: ix.parsed.info.tokenAmount.amount,
+            source: ix.parsed.info.source,
+            destination: ix.parsed.info.destination,
+          });
+        }
+      });
+    }
+  });
+
+  if (transfers.length < 2) {
+    return [];
+  }
+
+  return [transfers[0], transfers[transfers.length - 1]];
 }
 
 /**
  * Analyzes transaction
- * @param signature
  * @returns
  */
 async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signature: string, dex: string) {
@@ -288,41 +423,14 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
     const instructions = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
 
     if (dex === 'Jupiter') {
-      const swapIxIdx = instructions.findIndex((ix) => {
-        return ix.programId.equals(JUPITER_AGGREGATOR_V6);
-      });
-
-      if (swapIxIdx === -1) {
-        return null;
-      }
-      const transfers: any[] = [];
-      transaction.meta?.innerInstructions?.forEach((instruction) => {
-        if (instruction.index <= swapIxIdx) {
-          (instruction.instructions as ParsedInstruction[]).forEach((ix) => {
-            if (ix.parsed?.type === 'transfer' && ix.parsed.info.amount) {
-              transfers.push({
-                amount: ix.parsed.info.amount,
-                source: ix.parsed.info.source,
-                destination: ix.parsed.info.destination,
-              });
-            } else if (ix.parsed?.type === 'transferChecked' && ix.parsed.info.tokenAmount.amount) {
-              transfers.push({
-                amount: ix.parsed.info.tokenAmount.amount,
-                source: ix.parsed.info.source,
-                destination: ix.parsed.info.destination,
-              });
-            }
-          });
-        }
-      });
-
-      if (transfers.length === 0) {
-        return null;
+      const transfers = getJupiterTransfers(transaction);
+      if (transfers.length < 2) {
+        return;
       }
 
       const [tokenIn, tokenOut] = await Promise.all([
         getTokenMintAddress(transfers[0].source, transfers[0].destination),
-        getTokenMintAddress(transfers[transfers.length - 1].source, transfers[transfers.length - 1].destination),
+        getTokenMintAddress(transfers[1].source, transfers[1].destination),
       ]);
 
       return {
@@ -340,11 +448,13 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
           token_address: tokenIn?.mint as string,
           amount: (transfers[0].amount as number) / 10 ** (tokenIn?.decimals || 0),
           symbol: tokenIn?.symbol,
+          decimals: tokenIn?.decimals,
         },
         to: {
           token_address: tokenOut?.mint as string,
-          amount: (transfers[transfers.length - 1].amount as number) / 10 ** (tokenOut?.decimals || 0),
+          amount: (transfers[1].amount as number) / 10 ** (tokenOut?.decimals || 0),
           symbol: tokenOut?.symbol,
+          decimals: tokenOut?.decimals,
         },
       } as AnalyzeType;
     } else {
@@ -379,7 +489,7 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
       solAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.baseMint : poolData.quoteMint;
       tokenAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.quoteMint : poolData.baseMint;
 
-      const trade = await getTradeSize(transaction, solAccount, tokenAccount);
+      const trade = await getTradeSize(transaction, 'Raydium', solAccount, tokenAccount);
       const tokenInfor = await getTokenInfo(connection1, tokenAccount);
 
       return {
@@ -392,11 +502,13 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
           token_address: solAccount.toString(),
           amount: trade.diffSol,
           symbol: trade.isBuy ? 'SOL' : tokenInfor?.symbol,
+          decimals: trade.isBuy ? LAMPORTS_PER_SOL : tokenInfor?.decimals,
         },
         to: {
           token_address: tokenAccount.toString(),
           amount: trade.diffOther,
           symbol: !trade.isBuy ? 'SOL' : tokenInfor?.symbol,
+          decimals: !trade.isBuy ? LAMPORTS_PER_SOL : tokenInfor?.decimals,
         },
       } as AnalyzeType;
     }
@@ -473,14 +585,14 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey) {
     console.log('txId:', txId);
 
     if (txId) {
-      return { success: true, outAmount: Number(out.amountOut) / 10 ** mintOut.decimals, signature: txId };
+      return { success: true, signature: txId };
     } else {
-      return { success: false, outAmount: 0, signature: null };
+      return { success: false, signature: null };
     }
   } catch (error) {
     console.error('Error: buy on raydium', error);
     logError();
-    return { success: false, outAmount: 0, signature: null };
+    return { success: false, signature: null };
   }
 }
 
@@ -494,14 +606,14 @@ async function jupiterSwap(mintIn: PublicKey, mintOut: PublicKey) {
     deserializedTx.sign([WALLET]);
     const { signature, success } = await executeTransaction(connection1, deserializedTx);
     if (success) {
-      return { success: true, outAmount: quote?.outAmount, signature };
+      return { success: true, signature };
     } else {
-      return { success: false, outAmount: 0, signature: null };
+      return { success: false, signature: null };
     }
   } catch (error) {
     console.error(error);
     logError();
-    return { success: false, outAmount: 0, signature: null };
+    return { success: false, signature: null };
   }
 }
 

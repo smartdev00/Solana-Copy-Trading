@@ -1,22 +1,5 @@
 import chalk from 'chalk';
-
-export type AnalyzeType = {
-  signature: string;
-  target_wallet: string;
-  type: string;
-  dex: string;
-  pool_address: string;
-  from: {
-    token_address: string;
-    amount: number;
-    symbol: string;
-  };
-  to: {
-    token_address: string;
-    amount: number;
-    symbol: string;
-  };
-};
+import { AnalyzeType } from './types';
 
 export const logLine = () => {
   console.log(
@@ -31,8 +14,8 @@ export const logSkipped = (solDiff: number) => {
   logLine();
 };
 
-export function logError() {
-  console.log('❌', `${chalk.red('ERROR:')}: Failed to process transaction due to low balance.`);
+export function logError(str?: string) {
+  console.log('❌', `${chalk.red('ERROR:')}: ${str || 'Failed to process transaction due to low balance.'}`);
 }
 
 export function logBuyOrSellTrigeer(
