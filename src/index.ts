@@ -18,6 +18,7 @@ import {
   ParsedInstruction,
   ParsedAccountData,
   LAMPORTS_PER_SOL,
+  Transaction,
 } from '@solana/web3.js';
 import {
   liquidityStateV4Layout,
@@ -26,6 +27,8 @@ import {
   LiquidityPoolKeys,
   Market,
   Raydium,
+  ApiV3PoolInfoStandardItem,
+  printSimulate,
 } from '@raydium-io/raydium-sdk-v2';
 import {
   createAssociatedTokenAccountIdempotentInstruction,
@@ -33,6 +36,8 @@ import {
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token';
 import { AnalyzeType, logBuyOrSellTrigeer, logError, logLine, logSkipped, logger, roundToDecimal } from './utils';
+import { BN } from '@coral-xyz/anchor';
+import { executeTransaction, getDeserialize, getQuoteForSwap, getSerializedTransaction } from './jupiter';
 
 dotenv.config({ path: './.env' });
 
@@ -55,7 +60,7 @@ const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY 
 const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
 const COMPUTE_PRICE = 100000;
 const LIMIT_ORDER = 1.25;
-const SLIPPAGE = 5;
+const SLIPPAGE = 50;
 
 const soundFilePaths = {
   botStart: path.join(__dirname, '../sounds/bot-start.mp3'),
@@ -114,7 +119,7 @@ async function monitorNewToken() {
     'SOL'
   );
   console.log(chalk.gray('-------------------------------------------------------------------------'));
-  // let pool = false;
+  let pool = false;
 
   try {
     await connection1.onLogs(
@@ -124,17 +129,17 @@ async function monitorNewToken() {
           return;
         }
 
-        // if (pool === true) {
-        //   return;
-        // }
-
-        // pool = true;
+        if (pool === true) {
+          return;
+        }
+        console.log(signature);
 
         // SmartFox Identify the dex
         const dex = identifyDex(logs);
         if (!dex) {
           return;
         }
+        pool = true;
 
         // SmartFox Skip the already processed transaction
         if (processedTransactionSignatures.includes(signature)) {
@@ -210,12 +215,24 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
   logLine();
 
   // sound.play(soundFilePaths.buyTradeCopied);
+  const mintOut = new PublicKey(analyze.to.token_address);
 
-  let buy;
+  let buy: { success: boolean; outAmount: number | any; signature: string | null } = {
+    success: false,
+    outAmount: 0,
+    signature: null,
+  };
+
   if (analyze.type === 'Buy' && analyze.dex === 'Raydium') {
-    buy = await Buy(connection1, new PublicKey(analyze.to.token_address), new PublicKey(analyze.pool_address));
+    buy = await raydiumSwap(SOL_ADDRESS, new PublicKey(analyze.pool_address));
+  } else if (analyze.type === 'Buy' && analyze.dex === 'Jupiter') {
+    buy = await jupiterSwap(SOL_ADDRESS, mintOut);
   }
-  console.log('buy:', buy);
+
+  if (buy.success && buy.outAmount) {
+    logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, buy.outAmount, analyze.to.symbol);
+    buyTokenList.push(mintOut);
+  }
 
   // if (buy && buy.mint && buy.poolKeys) {
   //   sound.play(soundFilePaths.sellTrade);
@@ -408,247 +425,134 @@ async function getTokenMintAddress(source: string, destination: string) {
   }
 }
 
-async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
+// SmartFox Swap on raydium dex
+async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey) {
   try {
-    if (buyTokenList.includes(mint)) {
-      console.log('Token: already purchased this token!');
-      return;
-    }
-
     const raydium = await Raydium.load({
       connection: connection1,
       owner: WALLET,
     });
 
-    const poolKeys = await getLiquidityV4PoolKeys(connection, pool);
+    const poolKeys = await raydium.liquidity.getAmmPoolKeys(pool.toString());
+    const poolInfo = (await raydium.api.fetchPoolById({ ids: pool.toString() }))[0] as ApiV3PoolInfoStandardItem;
+    const rpcData = await raydium.liquidity.getRpcPoolInfo(pool.toString());
 
-    if (poolKeys) {
-      const swapInst = await getSwapTokenGivenInInstructions(
-        WALLET.publicKey,
-        poolKeys,
-        SOL_ADDRESS,
-        BigInt(TRADE_AMOUNT)
-      );
+    const [baseReserve, quoteReserve, status] = [rpcData.baseReserve, rpcData.quoteReserve, rpcData.status.toNumber()];
+    const baseIn = mintInPub.toString() === poolInfo.mintA.address;
+    const [mintIn, mintOut] = baseIn ? [poolInfo.mintA, poolInfo.mintB] : [poolInfo.mintB, poolInfo.mintA];
 
-      let buyInsts: TransactionInstruction[] = [];
-      buyInsts.push(
-        ComputeBudgetProgram.setComputeUnitPrice({
-          microLamports: COMPUTE_PRICE,
-        }),
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 75000 }),
-        ...swapInst
-      );
-
-      let latestBlock = await connection.getLatestBlockhash();
-
-      const newTokenTransactionMessage = new TransactionMessage({
-        payerKey: WALLET.publicKey,
-        recentBlockhash: latestBlock.blockhash,
-        instructions: buyInsts,
-      }).compileToV0Message();
-
-      const versionedNewTokenTransaction = new VersionedTransaction(newTokenTransactionMessage);
-      versionedNewTokenTransaction.sign([WALLET]);
-
-      const signature = await connection.sendRawTransaction(versionedNewTokenTransaction.serialize(), {
-        skipPreflight: false,
-      });
-      console.log('SendRawTransaction: ', signature);
-
-      const confirmStatus = await connection.confirmTransaction(
-        {
-          signature: signature,
-          lastValidBlockHeight: latestBlock.lastValidBlockHeight,
-          blockhash: latestBlock.blockhash,
-        },
-        'confirmed'
-      );
-
-      if (confirmStatus.value.err == null) {
-        console.log(`Buy: buy token - ${signature}`);
-        logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, 1500, 'HOOD');
-        buyTokenList.push(mint);
-        return { mint: mint, poolKeys: poolKeys };
-      } else {
-        return null;
-      }
-    }
-  } catch (error) {
-    console.log('Error: buy on raydium', error);
-    logError();
-    return null;
-  }
-}
-
-async function sellWithLimitOrder(connection: Connection, mint: PublicKey, poolKeys: LiquidityPoolKeys) {
-  let tokenBalanceString: string;
-  const targetProfit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER);
-  const targetLoss = Math.floor(TRADE_AMOUNT / 2);
-  const isCorrectOrder = poolKeys.baseMint.toString() === mint.toString() ? true : false;
-  const baseVault = isCorrectOrder ? poolKeys.baseVault : poolKeys.quoteVault;
-  const quoteVault = isCorrectOrder ? poolKeys.quoteVault : poolKeys.baseVault;
-  const mintATA = getAssociatedTokenAddressSync(mint, WALLET.publicKey);
-  try {
-    tokenBalanceString = (await connection.getTokenAccountBalance(mintATA)).value.amount;
-    const tokenBalance = BigInt(tokenBalanceString);
-    /*Track Lp Reserves*/
-    while (true) {
-      console.info('Track LP reserves');
-      try {
-        const lpReserve = (await connection.getMultipleParsedAccounts([baseVault, quoteVault])).value;
-        const baseData: any = lpReserve[0]?.data;
-        const quoteData: any = lpReserve[1]?.data;
-        const baseReserve = BigInt(baseData['parsed']['info']['tokenAmount']['amount']);
-        const solReserve = BigInt(quoteData['parsed']['info']['tokenAmount']['amount']);
-        const expectedSolAmount = expectAmountOut(tokenBalance, baseReserve, solReserve);
-        if (expectedSolAmount > BigInt(targetProfit)) {
-          logToFile(
-            'Bot Sell',
-            WALLET.publicKey.toString(),
-            mint.toString(),
-            (tokenBalance / BigInt(1000000000)).toString()
-          );
-          console.log('Sell: detect profitable moment');
-          const sellRes = await sellAllToken(connection, poolKeys.id, mint, tokenBalanceString);
-          break;
-        }
-      } catch {
-        console.log('lp catching error due to helius');
-      }
-      await sleep(100);
-    }
-  } catch {
-    logError();
-    return null;
-  }
-}
-
-function expectAmountOut(tokenAmount: bigint, tokenReserve: bigint, solReserve: bigint) {
-  const bigSlippage = BigInt((100 - SLIPPAGE) * 100);
-  const res = ((tokenAmount + solReserve) * bigSlippage) / (BigInt(10000) * (tokenReserve + tokenAmount));
-  return res;
-}
-
-async function sellAllToken(connection: Connection, pool: PublicKey, mint: PublicKey, tokenAmount: string) {
-  const tokenATA = getAssociatedTokenAddressSync(mint, WALLET.publicKey);
-  const solATA = getAssociatedTokenAddressSync(SOL_ADDRESS, WALLET.publicKey);
-  const tokenBalance = BigInt(tokenAmount);
-  const poolKeys = await getLiquidityV4PoolKeys(connection1, pool);
-  if (poolKeys && tokenBalance > BigInt(0)) {
-    const swapInst = await getSwapTokenGivenInInstructions(WALLET.publicKey, poolKeys, mint, tokenBalance);
-    let sellInsts: TransactionInstruction[] = [];
-    sellInsts.push(
-      ComputeBudgetProgram.setComputeUnitPrice({
-        microLamports: 10000000,
-      }),
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 78000 }),
-      ...swapInst,
-      createCloseAccountInstruction(tokenATA, WALLET.publicKey, WALLET.publicKey, [])
-    );
-    let blockhash = await connection.getLatestBlockhash().then((res) => res.blockhash);
-    const newTokenTransactionMessage = new TransactionMessage({
-      payerKey: WALLET.publicKey,
-      recentBlockhash: blockhash,
-      instructions: sellInsts,
-    }).compileToV0Message();
-    const versionedNewTokenTransaction = new VersionedTransaction(newTokenTransactionMessage);
-    versionedNewTokenTransaction.sign([WALLET]);
-    const res = await connection.sendRawTransaction(versionedNewTokenTransaction.serialize(), { skipPreflight: true });
-    console.log(`Sell: sell token - ${res}`);
-    logBuyOrSellTrigeer(false, 0.058, 100, 'HOOD', '+12');
-  }
-}
-
-async function getLiquidityV4PoolKeys(connection: Connection, pool: PublicKey) {
-  try {
-    const poolAccount = await connection.getAccountInfo(pool, 'confirmed');
-    if (!poolAccount) return null;
-    const poolInfo = liquidityStateV4Layout.decode(poolAccount.data);
-    if (
-      poolInfo.baseMint.toString() != SOL_ADDRESS.toString() &&
-      poolInfo.quoteMint.toString() != SOL_ADDRESS.toString()
-    ) {
-      return null;
-    }
-
-    const marketAccount = await connection.getAccountInfo(poolInfo.marketId, 'confirmed');
-    if (!marketAccount) return null;
-    const marketInfo = MARKET_STATE_LAYOUT_V3.decode(marketAccount.data);
-
-    const lpMintAccount = await connection.getAccountInfo(poolInfo.lpMint, 'confirmed');
-    if (!lpMintAccount) return null;
-    const lpMintInfo = SPL_MINT_LAYOUT.decode(lpMintAccount.data);
-
-    const poolKeys: LiquidityPoolKeys = {
-      id: pool,
-      baseMint: poolInfo.baseMint,
-      quoteMint: poolInfo.quoteMint,
-      lpMint: poolInfo.lpMint,
-      baseDecimals: poolInfo.baseDecimal,
-      quoteDecimals: poolInfo.quoteDecimal,
-      lpDecimals: lpMintInfo.decimals,
-      version: 4,
-      programId: poolAccount.owner,
-      authority: Liquidity.getAssociatedAuthority({
-        programId: poolAccount.owner,
-      }).publicKey,
-      openOrders: poolInfo.openOrders,
-      targetOrders: poolInfo.targetOrders,
-      baseVault: poolInfo.baseVault,
-      quoteVault: poolInfo.quoteVault,
-      withdrawQueue: poolInfo.withdrawQueue,
-      lpVault: poolInfo.lpVault,
-      marketVersion: 3,
-      marketProgramId: poolInfo.marketProgramId,
-      marketId: poolInfo.marketId,
-      marketAuthority: Market.getAssociatedAuthority({
-        programId: poolInfo.marketProgramId,
-        marketId: poolInfo.marketId,
-      }).publicKey,
-      marketBaseVault: marketInfo.baseVault,
-      marketQuoteVault: marketInfo.quoteVault,
-      marketBids: marketInfo.bids,
-      marketAsks: marketInfo.asks,
-      marketEventQueue: marketInfo.eventQueue,
-      lookupTableAccount: PublicKey.default,
-    };
-    return poolKeys;
-  } catch (error) {
-    console.log('Error: get poolkeys error!');
-    return null;
-  }
-}
-
-async function getSwapTokenGivenInInstructions(
-  owner: PublicKey,
-  poolKeys: LiquidityPoolKeys,
-  tokenIn: PublicKey,
-  _amountIn: bigint
-) {
-  const tokenOut = tokenIn.equals(poolKeys.baseMint) ? poolKeys.quoteMint : poolKeys.baseMint;
-
-  const tokenInATA = getAssociatedTokenAddressSync(tokenIn, owner);
-  const tokenOutATA = getAssociatedTokenAddressSync(tokenOut, owner);
-
-  const { innerTransaction } = Liquidity.makeSwapFixedInInstruction(
-    {
-      poolKeys: poolKeys,
-      userKeys: {
-        tokenAccountIn: tokenInATA,
-        tokenAccountOut: tokenOutATA,
-        owner,
+    const out = raydium.liquidity.computeAmountOut({
+      poolInfo: {
+        ...poolInfo,
+        baseReserve,
+        quoteReserve,
+        status,
+        version: 4,
       },
-      amountIn: _amountIn,
-      minAmountOut: BigInt(0),
-    },
-    poolKeys.version
-  );
+      amountIn: new BN(TRADE_AMOUNT),
+      mintIn: mintIn.address,
+      mintOut: mintOut.address,
+      slippage: 0.01,
+    });
 
-  return [
-    createAssociatedTokenAccountIdempotentInstruction(owner, tokenOutATA, owner, tokenOut),
-    ...innerTransaction.instructions,
-  ];
+    const { execute, transaction } = await raydium.liquidity.swap({
+      poolInfo,
+      poolKeys,
+      amountIn: new BN(TRADE_AMOUNT),
+      amountOut: out.minAmountOut,
+      fixedSide: 'in',
+      inputMint: mintIn.address,
+      computeBudgetConfig: {
+        microLamports: 100000,
+        units: 500000,
+      },
+    });
+
+    // printSimulate([transaction as Transaction]);
+    const { txId } = await execute({ sendAndConfirm: true });
+    console.log('txId:', txId);
+
+    if (txId) {
+      return { success: true, outAmount: Number(out.amountOut) / 10 ** mintOut.decimals, signature: txId };
+    } else {
+      return { success: false, outAmount: 0, signature: null };
+    }
+  } catch (error) {
+    console.error('Error: buy on raydium', error);
+    logError();
+    return { success: false, outAmount: 0, signature: null };
+  }
 }
+
+// SmartFox Swap on jupiter dex
+async function jupiterSwap(mintIn: PublicKey, mintOut: PublicKey) {
+  try {
+    const inAmount = TRADE_AMOUNT;
+    const quote = await getQuoteForSwap(mintIn.toString(), mintOut.toString(), inAmount, SLIPPAGE);
+    const swapTransaction = await getSerializedTransaction(quote, WALLET.publicKey.toString(), 500000);
+    const deserializedTx = await getDeserialize(swapTransaction);
+    deserializedTx.sign([WALLET]);
+    const { signature, success } = await executeTransaction(connection1, deserializedTx);
+    if (success) {
+      return { success: true, outAmount: quote?.outAmount, signature };
+    } else {
+      return { success: false, outAmount: 0, signature: null };
+    }
+  } catch (error) {
+    console.error(error);
+    logError();
+    return { success: false, outAmount: 0, signature: null };
+  }
+}
+
+// async function sellWithLimitOrder(connection: Connection, mint: PublicKey, poolKeys: LiquidityPoolKeys) {
+//   let tokenBalanceString: string;
+//   const targetProfit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER);
+//   const targetLoss = Math.floor(TRADE_AMOUNT / 2);
+//   const isCorrectOrder = poolKeys.baseMint.toString() === mint.toString() ? true : false;
+//   const baseVault = isCorrectOrder ? poolKeys.baseVault : poolKeys.quoteVault;
+//   const quoteVault = isCorrectOrder ? poolKeys.quoteVault : poolKeys.baseVault;
+//   const mintATA = getAssociatedTokenAddressSync(mint, WALLET.publicKey);
+//   try {
+//     tokenBalanceString = (await connection.getTokenAccountBalance(mintATA)).value.amount;
+//     const tokenBalance = BigInt(tokenBalanceString);
+//     /*Track Lp Reserves*/
+//     while (true) {
+//       console.info('Track LP reserves');
+//       try {
+//         const lpReserve = (await connection.getMultipleParsedAccounts([baseVault, quoteVault])).value;
+//         const baseData: any = lpReserve[0]?.data;
+//         const quoteData: any = lpReserve[1]?.data;
+//         const baseReserve = BigInt(baseData['parsed']['info']['tokenAmount']['amount']);
+//         const solReserve = BigInt(quoteData['parsed']['info']['tokenAmount']['amount']);
+//         const expectedSolAmount = expectAmountOut(tokenBalance, baseReserve, solReserve);
+//         if (expectedSolAmount > BigInt(targetProfit)) {
+//           logToFile(
+//             'Bot Sell',
+//             WALLET.publicKey.toString(),
+//             mint.toString(),
+//             (tokenBalance / BigInt(1000000000)).toString()
+//           );
+//           console.log('Sell: detect profitable moment');
+//           const sellRes = await sellAllToken(connection, poolKeys.id, mint, tokenBalanceString);
+//           break;
+//         }
+//       } catch {
+//         console.log('lp catching error due to helius');
+//       }
+//       await sleep(100);
+//     }
+//   } catch {
+//     logError();
+//     return null;
+//   }
+// }
+
+// function expectAmountOut(tokenAmount: bigint, tokenReserve: bigint, solReserve: bigint) {
+//   const bigSlippage = BigInt((100 - SLIPPAGE) * 100);
+//   const res = ((tokenAmount + solReserve) * bigSlippage) / (BigInt(10000) * (tokenReserve + tokenAmount));
+//   return res;
+// }
 
 // Performs logging to file
 function logToFile(action: string, wallet: string, token: string, amount: string, reason = '') {
