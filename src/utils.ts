@@ -34,8 +34,7 @@ export function logBuyOrSellTrigeer(
     );
   } else {
     console.log(
-      '🔴',
-      `${chalk.red('SELL TRIGGERED')}: Sold ${mintAmount}% of ${chalk.yellow(symbol)} for ${solAmount} ${chalk.yellow(
+      `🔴 ${chalk.red('SELL TRIGGERED')}: Sold ${mintAmount}% of ${chalk.yellow(symbol)} for ${solAmount} ${chalk.yellow(
         'SOL'
       )} (${chalk.green('Profit')}: ${profit}%)`
     );
@@ -54,7 +53,7 @@ export const logger = (data: AnalyzeType) => {
     );
   } else if (data.type === 'Sell') {
     console.log(
-      `🔴${chalk.red.bold('[SELL]')} ${data.from.amount} ${chalk.yellow(data.from.symbol)} ➡ ${
+      `🔴 ${chalk.red.bold('[SELL]')} ${data.from.amount} ${chalk.yellow(data.from.symbol)} ➡ ${
         data.to.amount
       } ${chalk.yellow('SOL')} ${chalk.gray(`[${timestamp}]`)}`
     );
