@@ -18,41 +18,30 @@ import {
   ParsedInstruction,
   ParsedAccountData,
   LAMPORTS_PER_SOL,
+  Transaction,
 } from '@solana/web3.js';
 import {
-  LIQUIDITY_STATE_LAYOUT_V4,
-  Liquidity,
+  liquidityStateV4Layout,
   MARKET_STATE_LAYOUT_V3,
   SPL_MINT_LAYOUT,
   LiquidityPoolKeys,
   Market,
-} from '@raydium-io/raydium-sdk';
-
+  Raydium,
+  ApiV3PoolInfoStandardItem,
+  printSimulate,
+} from '@raydium-io/raydium-sdk-v2';
 import {
   createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token';
-import { AnalyzeType, logBuyOrSellTrigeer, logError, logLine, logSkipped, logger, roundToDecimal } from './utils';
+import { logBuyOrSellTrigeer, logError, logLine, logSkipped, logger, roundToDecimal } from './utils';
+import { BN } from '@coral-xyz/anchor';
+import BigNumber from 'bignumber.js';
+import { executeTransaction, getDeserialize, getQuoteForSwap, getSerializedTransaction } from './jupiter';
+import { TokenListType, AnalyzeType } from './types';
 
-// Process command-line arguments
-// The app requires strictly one command-line argument which must be a path to configuration file
-// For example `npm run start config.env`
-if (process.argv.length !== 3) {
-  console.error('Error launching app:');
-  console.error('Application requires exactly one command-line parameter which must be a path to configuration file.');
-  console.error('For example `npm run start config.env`');
-  process.exit();
-}
-
-// Check configuration file and initialize environment variables
-const pathToConfigurationFile = path.join(__dirname, process.argv[2]);
-if (!fs.existsSync(pathToConfigurationFile)) {
-  console.error('Error launching app:');
-  console.error(`Configuration file ${pathToConfigurationFile} not found.`);
-  process.exit();
-}
-dotenv.config({ path: pathToConfigurationFile });
+dotenv.config({ path: './.env' });
 
 // Initialize parameters from environment variables
 const connection1 = new Connection(process.env.CONNECTION_URL_1 || '', {
@@ -72,8 +61,8 @@ const SOL_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112')
 const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY || ''));
 const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
 const COMPUTE_PRICE = 100000;
-const LIMIT_ORDER = 1.25;
-const SLIPPAGE = 5;
+const LIMIT_ORDER = 1;
+const SLIPPAGE = 50;
 
 const soundFilePaths = {
   botStart: path.join(__dirname, '../sounds/bot-start.mp3'),
@@ -121,7 +110,7 @@ const processedTransactionSignatures: string[] = [];
  */
 const processedTransactionSignaturesLimitCount = signaturesForAddressLimitCount * 10;
 
-let buyTokenList: PublicKey[] = [];
+let buyTokenList: TokenListType[] = [];
 
 async function monitorNewToken() {
   console.info(chalk.bgWhite.black('       🛠  BOT INITIALIZED       '));
@@ -132,6 +121,7 @@ async function monitorNewToken() {
     'SOL'
   );
   console.log(chalk.gray('-------------------------------------------------------------------------'));
+  // let pool = false;
 
   try {
     await connection1.onLogs(
@@ -141,11 +131,17 @@ async function monitorNewToken() {
           return;
         }
 
+        // if (pool === true) {
+        //   return;
+        // }
+        console.log(signature);
+
         // SmartFox Identify the dex
         const dex = identifyDex(logs);
         if (!dex) {
           return;
         }
+        // pool = true;
 
         // SmartFox Skip the already processed transaction
         if (processedTransactionSignatures.includes(signature)) {
@@ -197,78 +193,237 @@ function identifyDex(logs: string[]) {
 /*
  * Process specific transaction
  */
-
 async function processTransaction(transaction: ParsedTransactionWithMeta, signature: string, dex: string) {
-  // SmartFox Analyze transaction, get poolAccount, solAccount and tokenAccount account
-  const analyze = await analyzeTransaction(transaction, signature, dex);
+  try {
+    // SmartFox Analyze transaction, get poolAccount, solAccount and tokenAccount account
+    const analyze = await analyzeTransaction(transaction, signature, dex);
 
-  if (!analyze) {
-    console.info(`${signature} is not a swap transaction.`);
-    return;
+    logger(analyze);
+    let solDiff = 0;
+    if (analyze.type === 'Buy') solDiff = analyze.from.amount;
+    if (analyze.type === 'Sell') solDiff = analyze.to.amount;
+
+    // Skip trades below the minimum threshold
+    if (solDiff !== 0 && solDiff * LAMPORTS_PER_SOL < TARGET_WALLET_MIN_TRADE) {
+      logSkipped(solDiff);
+      logLine();
+      sound.play(soundFilePaths.buyTrade);
+      return;
+    }
+    logLine();
+
+    // sound.play(soundFilePaths.buyTradeCopied);
+
+    let swapResult: { success: boolean; signature: string | null } = {
+      success: false,
+      signature: null,
+    };
+
+    // Copy the buy action of target wallet
+    if (analyze.type === 'Buy') {
+      const mintOut = new PublicKey(analyze.to.token_address);
+
+      // Execute the purchase transaction
+      if (analyze.dex === 'Raydium' && analyze.pool_address) {
+        swapResult = await raydiumSwap(SOL_ADDRESS, new PublicKey(analyze.pool_address), TRADE_AMOUNT);
+      } else if (analyze.dex === 'Jupiter') {
+        swapResult = await jupiterSwap(SOL_ADDRESS, mintOut, TRADE_AMOUNT);
+      }
+
+      // If purchase succeeds
+      if (swapResult.success && swapResult.signature) {
+        const transaction = await connection1.getParsedTransaction(swapResult.signature, 'confirmed');
+        if (!transaction) {
+          throw new Error('Invalid transaction signature.');
+        }
+        const swapSize = await getTradeSize(transaction, analyze.dex, SOL_ADDRESS, mintOut);
+
+        // Add token to buy token list
+        buyTokenList.push({
+          amount: swapSize.diffOther,
+          dex: analyze.dex,
+          fee: swapSize.diffSol - TRADE_AMOUNT / LAMPORTS_PER_SOL,
+          mint: mintOut,
+          sold: false,
+          decimals: analyze.to.decimals,
+          symbol: analyze.to.symbol,
+          pool: analyze.pool_address,
+        });
+
+        logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, swapSize.diffOther, analyze.to.symbol); // Log the purchase success message
+
+        // If purchase failed
+      } else {
+        logError('Purchase failed');
+      }
+
+      // Copy the sell action of target wallet
+    } else if (analyze.type === 'Sell') {
+      const mintIn = new PublicKey(analyze.from.token_address);
+
+      // Find the index of token in token list
+      const index = buyTokenList.findIndex((token) => token.mint.equals(mintIn));
+
+      // Skip if you never bought this token
+      if (index === -1) {
+        return;
+      }
+      const token = buyTokenList[index];
+
+      // Execute swap
+      if (analyze.dex === 'Raydium' && analyze.pool_address) {
+        swapResult = await raydiumSwap(
+          mintIn,
+          new PublicKey(analyze.pool_address),
+          Math.floor(token.amount * 10 ** token.decimals)
+        );
+      } else if (analyze.dex === 'Jupiter') {
+        swapResult = await jupiterSwap(mintIn, SOL_ADDRESS, Math.floor(token.amount * 10 ** token.decimals));
+      }
+
+      // If sale succeeds
+      if (swapResult.success && swapResult.signature) {
+        const { diffSol, profit } = await calculateProfit(swapResult.signature, token);
+        logBuyOrSellTrigeer(false, diffSol, token.amount, analyze.to.symbol, profit.toString()); // Log sale success message
+
+        buyTokenList.splice(index, 1); // Remove the token from buy list
+
+        // If sale failed
+      } else {
+        logError('Sale failed');
+      }
+    }
+  } catch (error: any) {
+    logError(error.message || 'Unexpected error while processing the transaction.');
   }
+}
 
-  logger(analyze);
-  let solDiff = 0;
-  if (analyze.type === 'Buy') solDiff = analyze.from.amount;
-  if (analyze.type === 'Sell') solDiff = analyze.to.amount;
+async function calculateProfit(signature: string, token: TokenListType) {
+  try {
+    const transaction = await connection1.getParsedTransaction(signature, 'confirmed');
+    if (!transaction) {
+      return { diffSol: 0, profit: 0 };
+    }
 
-  // Skip trades below the minimum threshold
-  if (solDiff !== 0 && solDiff * LAMPORTS_PER_SOL < TARGET_WALLET_MIN_TRADE) {
-    logSkipped(solDiff);
-    sound.play(soundFilePaths.buyTrade);
-    return;
+    const swapSize = await getTradeSize(transaction, token.dex, SOL_ADDRESS, token.mint);
+
+    const usedSol = TRADE_AMOUNT / LAMPORTS_PER_SOL + token.fee;
+    const profit = ((swapSize.diffSol - usedSol) * 100) / usedSol;
+
+    return { diffSol: swapSize.diffSol, profit };
+  } catch (error) {
+    console.error(error);
+    return { diffSol: 0, profit: 0 };
   }
-  logLine();
-
-  sound.play(soundFilePaths.buyTradeCopied);
-
-  // const buy = await Buy(connection1, tokenAccount, poolAccount);
-
-  // if (buy && buy.mint && buy.poolKeys) {
-  //   sound.play(soundFilePaths.sellTrade);
-  //   sellWithLimitOrder(connection2, buy.mint, buy.poolKeys);
-  // }
 }
 
 /**
  * Obtains trade size for transaction with specified transaction
  */
-async function getTradeSize(transaction: ParsedTransactionWithMeta, solAccount: PublicKey, otherAccount: PublicKey) {
-  const postTokenBalances = transaction.meta?.postTokenBalances;
-  const preTokenBalances = transaction.meta?.preTokenBalances;
+async function getTradeSize(
+  transaction: ParsedTransactionWithMeta,
+  dex: string,
+  solAccount?: PublicKey,
+  otherAccount?: PublicKey
+) {
+  if (dex === 'Raydium') {
+    const postTokenBalances = transaction.meta?.postTokenBalances?.filter(
+      (p) => p.owner === RAYDIUM_AUTHORITY_V4.toString()
+    );
+    const preTokenBalances = transaction.meta?.preTokenBalances?.filter(
+      (p) => p.owner === RAYDIUM_AUTHORITY_V4.toString()
+    );
 
-  const decimals =
-    postTokenBalances?.find(
-      (post) => post.mint === otherAccount.toString() && post.owner === RAYDIUM_AUTHORITY_V4.toString()
-    )?.uiTokenAmount.decimals || 0;
+    const decimals = postTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.decimals || 0;
 
-  const diffSol =
-    (postTokenBalances?.find(
-      (post) => post.mint === solAccount.toString() && post.owner === RAYDIUM_AUTHORITY_V4.toString()
-    )?.uiTokenAmount.uiAmount || 0) -
-    (preTokenBalances?.find(
-      (pre) => pre.mint === solAccount.toString() && pre.owner === RAYDIUM_AUTHORITY_V4.toString()
-    )?.uiTokenAmount.uiAmount || 0);
+    const diffSol = new BigNumber(
+      postTokenBalances?.find((p) => p.mint === solAccount?.toString())?.uiTokenAmount.uiAmount || 0
+    )
+      .minus(
+        new BigNumber(preTokenBalances?.find((p) => p.mint === solAccount?.toString())?.uiTokenAmount.uiAmount || 0)
+      )
+      .toNumber();
 
-  const diffOther =
-    (postTokenBalances?.find(
-      (post) => post.mint === otherAccount.toString() && post.owner === RAYDIUM_AUTHORITY_V4.toString()
-    )?.uiTokenAmount.uiAmount || 0) -
-    (preTokenBalances?.find(
-      (pre) => pre.mint === otherAccount.toString() && pre.owner === RAYDIUM_AUTHORITY_V4.toString()
-    )?.uiTokenAmount.uiAmount || 0);
+    const diffOther = new BigNumber(
+      postTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0
+    )
+      .minus(
+        new BigNumber(preTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0)
+      )
+      .toNumber();
 
-  return {
-    diffSol: Math.abs(roundToDecimal(diffSol)),
-    diffOther: Math.abs(roundToDecimal(diffOther, decimals)),
-    isBuy: diffSol > 0 ? true : false,
-  };
+    return {
+      diffSol: Math.abs(roundToDecimal(diffSol)),
+      diffOther: Math.abs(roundToDecimal(diffOther, decimals)),
+      isBuy: diffSol > 0 ? true : false,
+    };
+  } else {
+    const transfers = getJupiterTransfers(transaction);
+
+    const [tokenIn, tokenOut] = await Promise.all([
+      getTokenMintAddress(transfers[0].source, transfers[0].destination),
+      getTokenMintAddress(transfers[1].source, transfers[1].destination),
+    ]);
+
+    const diffSol =
+      tokenIn?.mint === SOL_ADDRESS.toString()
+        ? (transfers[0].amount as number) / LAMPORTS_PER_SOL
+        : (transfers[1].amount as number) / LAMPORTS_PER_SOL;
+
+    const diffOther =
+      tokenIn?.mint === SOL_ADDRESS.toString()
+        ? (transfers[1].amount as number) / 10 ** (tokenOut?.decimals || 0)
+        : (transfers[0].amount as number) / 10 ** (tokenIn?.decimals || 0);
+
+    return {
+      diffSol: Math.abs(roundToDecimal(diffSol)),
+      diffOther: Math.abs(roundToDecimal(diffOther)),
+      isBuy: diffSol > 0 ? true : false,
+    };
+  }
+}
+
+// Get the first and last transfers
+function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
+  const instructions = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
+  const swapIxIdx = instructions.findIndex((ix) => {
+    return ix.programId.equals(JUPITER_AGGREGATOR_V6);
+  });
+
+  if (swapIxIdx === -1) {
+    throw new Error('Non Jupiter Swap');
+  }
+
+  const transfers: any[] = [];
+  transaction.meta?.innerInstructions?.forEach((instruction) => {
+    if (instruction.index <= swapIxIdx) {
+      (instruction.instructions as ParsedInstruction[]).forEach((ix) => {
+        if (ix.parsed?.type === 'transfer' && ix.parsed.info.amount) {
+          transfers.push({
+            amount: ix.parsed.info.amount,
+            source: ix.parsed.info.source,
+            destination: ix.parsed.info.destination,
+          });
+        } else if (ix.parsed?.type === 'transferChecked' && ix.parsed.info.tokenAmount.amount) {
+          transfers.push({
+            amount: ix.parsed.info.tokenAmount.amount,
+            source: ix.parsed.info.source,
+            destination: ix.parsed.info.destination,
+          });
+        }
+      });
+    }
+  });
+
+  if (transfers.length < 2) {
+    throw new Error('Invalid Jupiter Swap');
+  }
+
+  return [transfers[0], transfers[transfers.length - 1]];
 }
 
 /**
  * Analyzes transaction
- * @param signature
- * @returns
  */
 async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signature: string, dex: string) {
   let solAccount: PublicKey | undefined;
@@ -278,41 +433,11 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
     const instructions = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
 
     if (dex === 'Jupiter') {
-      const swapIxIdx = instructions.findIndex((ix) => {
-        return ix.programId.equals(JUPITER_AGGREGATOR_V6);
-      });
-
-      if (swapIxIdx === -1) {
-        return null;
-      }
-      const transfers: any[] = [];
-      transaction.meta?.innerInstructions?.forEach((instruction) => {
-        if (instruction.index <= swapIxIdx) {
-          (instruction.instructions as ParsedInstruction[]).forEach((ix) => {
-            if (ix.parsed?.type === 'transfer' && ix.parsed.info.amount) {
-              transfers.push({
-                amount: ix.parsed.info.amount,
-                source: ix.parsed.info.source,
-                destination: ix.parsed.info.destination,
-              });
-            } else if (ix.parsed?.type === 'transferChecked' && ix.parsed.info.tokenAmount.amount) {
-              transfers.push({
-                amount: ix.parsed.info.tokenAmount.amount,
-                source: ix.parsed.info.source,
-                destination: ix.parsed.info.destination,
-              });
-            }
-          });
-        }
-      });
-
-      if (transfers.length === 0) {
-        return null;
-      }
+      const transfers = getJupiterTransfers(transaction);
 
       const [tokenIn, tokenOut] = await Promise.all([
         getTokenMintAddress(transfers[0].source, transfers[0].destination),
-        getTokenMintAddress(transfers[transfers.length - 1].source, transfers[transfers.length - 1].destination),
+        getTokenMintAddress(transfers[1].source, transfers[1].destination),
       ]);
 
       return {
@@ -325,16 +450,18 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
             ? 'Sell'
             : 'Swap',
         dex,
-        pool_address: '',
+        pool_address: null,
         from: {
           token_address: tokenIn?.mint as string,
           amount: (transfers[0].amount as number) / 10 ** (tokenIn?.decimals || 0),
           symbol: tokenIn?.symbol,
+          decimals: tokenIn?.decimals,
         },
         to: {
           token_address: tokenOut?.mint as string,
-          amount: (transfers[transfers.length - 1].amount as number) / 10 ** (tokenOut?.decimals || 0),
+          amount: (transfers[1].amount as number) / 10 ** (tokenOut?.decimals || 0),
           symbol: tokenOut?.symbol,
+          decimals: tokenOut?.decimals,
         },
       } as AnalyzeType;
     } else {
@@ -355,21 +482,21 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
       }
 
       if (!poolAccount) {
-        return null;
+        throw new Error('No Raydium or Jupiter swap transaction.');
       }
 
       // OB Get information of pool account
       const poolInfo = await connection1.getAccountInfo(poolAccount, { commitment: 'confirmed' });
       if (!poolInfo) {
-        return null;
+        throw new Error('Invalid Raydium pool account.');
       }
 
       // OB Decode the data of information of pool account
-      const poolData = LIQUIDITY_STATE_LAYOUT_V4.decode(poolInfo?.data);
+      const poolData = liquidityStateV4Layout.decode(poolInfo?.data);
       solAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.baseMint : poolData.quoteMint;
       tokenAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.quoteMint : poolData.baseMint;
 
-      const trade = await getTradeSize(transaction, solAccount, tokenAccount);
+      const trade = await getTradeSize(transaction, 'Raydium', solAccount, tokenAccount);
       const tokenInfor = await getTokenInfo(connection1, tokenAccount);
 
       return {
@@ -382,17 +509,19 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
           token_address: solAccount.toString(),
           amount: trade.diffSol,
           symbol: trade.isBuy ? 'SOL' : tokenInfor?.symbol,
+          decimals: trade.isBuy ? LAMPORTS_PER_SOL : tokenInfor?.decimals,
         },
         to: {
           token_address: tokenAccount.toString(),
           amount: trade.diffOther,
           symbol: !trade.isBuy ? 'SOL' : tokenInfor?.symbol,
+          decimals: !trade.isBuy ? LAMPORTS_PER_SOL : tokenInfor?.decimals,
         },
       } as AnalyzeType;
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error(error);
-    return null;
+    throw new Error(error.message || 'Unexpected error while analyzing transaction.');
   }
 }
 
@@ -415,238 +544,212 @@ async function getTokenMintAddress(source: string, destination: string) {
   }
 }
 
-async function Buy(connection: Connection, mint: PublicKey, pool: PublicKey) {
+// SmartFox Swap on raydium dex
+async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: number) {
   try {
-    if (buyTokenList.includes(mint)) {
-      logToFile(
-        'Skipped',
-        WALLET.publicKey.toString(),
-        mint.toString(),
-        (TRADE_AMOUNT / 1_000_000_000).toString(),
-        'Token already purchased'
-      );
-      console.log('Token: already purchased this token!');
-      return;
-    }
+    const raydium = await Raydium.load({
+      connection: connection1,
+      owner: WALLET,
+    });
 
-    const poolKeys = await getLiquidityV4PoolKeys(connection, pool);
-    if (poolKeys) {
-      const swapInst = await getSwapTokenGivenInInstructions(
-        WALLET.publicKey,
-        poolKeys,
-        SOL_ADDRESS,
-        BigInt(TRADE_AMOUNT)
-      );
-      let buyInsts: TransactionInstruction[] = [];
-      buyInsts.push(
-        ComputeBudgetProgram.setComputeUnitPrice({
-          microLamports: COMPUTE_PRICE,
-        }),
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 75000 }),
-        ...swapInst
-      );
-      let latestBlock = await connection.getLatestBlockhash();
-      const newTokenTransactionMessage = new TransactionMessage({
-        payerKey: WALLET.publicKey,
-        recentBlockhash: latestBlock.blockhash,
-        instructions: buyInsts,
-      }).compileToV0Message();
-      const versionedNewTokenTransaction = new VersionedTransaction(newTokenTransactionMessage);
-      versionedNewTokenTransaction.sign([WALLET]);
-      const res = await connection.sendRawTransaction(versionedNewTokenTransaction.serialize(), {
-        skipPreflight: false,
-      });
-      console.log('SendRawTransaction: ', res);
-      const confirmStatus = await connection.confirmTransaction(
-        {
-          signature: res,
-          lastValidBlockHeight: latestBlock.lastValidBlockHeight,
-          blockhash: latestBlock.blockhash,
-        },
-        'confirmed'
-      );
+    const poolKeys = await raydium.liquidity.getAmmPoolKeys(pool.toString());
+    const poolInfo = (await raydium.api.fetchPoolById({ ids: pool.toString() }))[0] as ApiV3PoolInfoStandardItem;
+    const rpcData = await raydium.liquidity.getRpcPoolInfo(pool.toString());
 
-      if (confirmStatus.value.err == null) {
-        console.log(`Buy: buy token - ${res}`);
-        logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, 1500, 'HOOD');
-        buyTokenList.push(mint);
-        return { mint: mint, poolKeys: poolKeys };
-      } else {
-        return null;
-      }
+    const [baseReserve, quoteReserve, status] = [rpcData.baseReserve, rpcData.quoteReserve, rpcData.status.toNumber()];
+    const baseIn = mintInPub.toString() === poolInfo.mintA.address;
+    const [mintIn, mintOut] = baseIn ? [poolInfo.mintA, poolInfo.mintB] : [poolInfo.mintB, poolInfo.mintA];
+
+    const out = raydium.liquidity.computeAmountOut({
+      poolInfo: {
+        ...poolInfo,
+        baseReserve,
+        quoteReserve,
+        status,
+        version: 4,
+      },
+      amountIn: new BN(inAmount),
+      mintIn: mintIn.address,
+      mintOut: mintOut.address,
+      slippage: 0.01,
+    });
+
+    const { execute, transaction } = await raydium.liquidity.swap({
+      poolInfo,
+      poolKeys,
+      amountIn: new BN(inAmount),
+      amountOut: out.minAmountOut,
+      fixedSide: 'in',
+      inputMint: mintIn.address,
+      computeBudgetConfig: {
+        microLamports: 100000,
+        units: 500000,
+      },
+    });
+
+    // printSimulate([transaction as Transaction]);
+    const { txId } = await execute({ sendAndConfirm: true });
+
+    if (txId) {
+      return { success: true, signature: txId };
+    } else {
+      return { success: false, signature: null };
     }
-  } catch (error) {
-    console.log('Error: buy on raydium', error);
-    logError();
-    return null;
+  } catch (error: any) {
+    console.error('Error: buy on raydium', error);
+    throw new Error(error.message || 'Unexpected error while swapping on Raydium');
   }
 }
 
-async function sellWithLimitOrder(connection: Connection, mint: PublicKey, poolKeys: LiquidityPoolKeys) {
-  let tokenBalanceString: string;
-  const targetProfit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER);
-  const targetLoss = Math.floor(TRADE_AMOUNT / 2);
-  const isCorrectOrder = poolKeys.baseMint.toString() === mint.toString() ? true : false;
-  const baseVault = isCorrectOrder ? poolKeys.baseVault : poolKeys.quoteVault;
-  const quoteVault = isCorrectOrder ? poolKeys.quoteVault : poolKeys.baseVault;
-  const mintATA = getAssociatedTokenAddressSync(mint, WALLET.publicKey);
+// SmartFox Swap on jupiter dex
+async function jupiterSwap(mintIn: PublicKey, mintOut: PublicKey, inAmount: number) {
   try {
-    tokenBalanceString = (await connection.getTokenAccountBalance(mintATA)).value.amount;
-    const tokenBalance = BigInt(tokenBalanceString);
-    /*Track Lp Reserves*/
-    while (true) {
-      console.info('Track LP reserves');
-      try {
-        const lpReserve = (await connection.getMultipleParsedAccounts([baseVault, quoteVault])).value;
-        const baseData: any = lpReserve[0]?.data;
-        const quoteData: any = lpReserve[1]?.data;
-        const baseReserve = BigInt(baseData['parsed']['info']['tokenAmount']['amount']);
-        const solReserve = BigInt(quoteData['parsed']['info']['tokenAmount']['amount']);
-        const expectedSolAmount = expectAmountOut(tokenBalance, baseReserve, solReserve);
-        if (expectedSolAmount > BigInt(targetProfit)) {
-          logToFile(
-            'Bot Sell',
-            WALLET.publicKey.toString(),
-            mint.toString(),
-            (tokenBalance / BigInt(1000000000)).toString()
-          );
-          console.log('Sell: detect profitable moment');
-          const sellRes = await sellAllToken(connection, poolKeys.id, mint, tokenBalanceString);
-          break;
-        }
-      } catch {
-        console.log('lp catching error due to helius');
-      }
-      await sleep(100);
+    const quote = await getQuoteForSwap(mintIn.toString(), mintOut.toString(), inAmount, SLIPPAGE);
+
+    const swapTransaction = await getSerializedTransaction(quote, WALLET.publicKey.toString(), 500000);
+
+    const deserializedTx = await getDeserialize(swapTransaction);
+
+    deserializedTx.sign([WALLET]);
+
+    const { signature, success } = await executeTransaction(connection1, deserializedTx);
+
+    if (success) {
+      return { success, signature };
+    } else {
+      return { success, signature: null };
     }
+  } catch (error: any) {
+    console.error(error);
+    throw new Error(error.message || 'Unexpected error while swapping on Jupiter.');
+  }
+}
+
+async function monitorToSell() {
+  try {
+    while (true) {
+      const indexesToDel: number[] = [];
+      await Promise.all(
+        buyTokenList.map(async (token, index) => {
+          let success: boolean = false;
+          let signature: string | null = null;
+
+          // If token is bought on Jupiter dex
+          if (token.dex === 'Jupiter') {
+            const quote = await getQuoteForSwap(SOL_ADDRESS.toString(), token.mint.toString(), TRADE_AMOUNT, SLIPPAGE);
+            if (quote.error) {
+              return;
+            }
+            const targetAmount = token.amount * LIMIT_ORDER * 10 ** token.decimals; // target profit
+
+            // If sell is non profitable
+            if (Number(quote.outAmount) < targetAmount) {
+              console.log('Non profitable');
+              return;
+            }
+            console.log('profitable');
+            // Sell token if its profitable
+            ({ success, signature } = await jupiterSwap(
+              token.mint,
+              SOL_ADDRESS,
+              Math.floor(token.amount * 10 ** token.decimals)
+            ));
+
+            // If token is bought on Raydium dex
+          } else {
+            const mint = token.mint;
+            const pool = token.pool;
+
+            // Return if no pool or non profitable
+            if (!pool || (pool && !(await isProfitable(mint, new PublicKey(pool))))) {
+              return;
+            }
+
+            ({ success, signature } = await raydiumSwap(
+              mint,
+              new PublicKey(pool),
+              token.amount * 10 ** token.decimals
+            ));
+          }
+
+          if (success && signature) {
+            const { diffSol, profit } = await calculateProfit(signature, token);
+            logBuyOrSellTrigeer(false, diffSol, token.amount, token.symbol, profit.toString()); // Log sale success message
+
+            indexesToDel.unshift(index); // Add index of item to remove
+
+            // If sale failed
+          } else {
+            logError('Sale failed');
+          }
+        })
+      );
+
+      for (const index of indexesToDel) {
+        buyTokenList.splice(index, 1);
+      }
+      await sleep(5000);
+    }
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function isProfitable(mint: PublicKey, pool: PublicKey) {
+  try {
+    const targetProfit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER);
+    const tokenBalance = await getATABalance(mint, WALLET.publicKey);
+    const [solReserve, baseReserve] = await getReserves(mint, pool);
+
+    const expectedSolAmount = expectAmountOut(tokenBalance, baseReserve, solReserve);
+
+    if (expectedSolAmount > BigInt(targetProfit)) {
+      return true;
+    }
+    return false;
   } catch {
-    logError();
-    return null;
+    return false;
+  }
+}
+
+async function getReserves(mint: PublicKey, pool: PublicKey) {
+  try {
+    const raydium = await Raydium.load({
+      connection: connection1,
+      owner: WALLET,
+    });
+
+    const poolKeys = await raydium.liquidity.getRpcPoolInfo(pool.toString());
+    const isCorrectOrder = poolKeys.baseMint.toString() === mint.toString() ? true : false;
+    const baseVault = isCorrectOrder ? poolKeys.baseVault : poolKeys.quoteVault;
+    const quoteVault = isCorrectOrder ? poolKeys.quoteVault : poolKeys.baseVault;
+
+    const lpReserve = (await connection1.getMultipleParsedAccounts([baseVault, quoteVault])).value;
+    const baseData: any = lpReserve[0]?.data;
+    const quoteData: any = lpReserve[1]?.data;
+    const baseReserve = BigInt(baseData['parsed']['info']['tokenAmount']['amount']);
+    const solReserve = BigInt(quoteData['parsed']['info']['tokenAmount']['amount']);
+    return [solReserve, baseReserve];
+  } catch (error: any) {
+    console.error(error);
+    throw new Error(error.message || 'Unexpected error');
+  }
+}
+
+async function getATABalance(mint: PublicKey, owner: PublicKey) {
+  try {
+    const mintATA = getAssociatedTokenAddressSync(mint, owner);
+    const tokenBalanceString = (await connection1.getTokenAccountBalance(mintATA)).value.amount;
+    return BigInt(tokenBalanceString);
+  } catch (error: any) {
+    console.error(error);
+    throw new Error(error.message || 'Unexpected error.');
   }
 }
 
 function expectAmountOut(tokenAmount: bigint, tokenReserve: bigint, solReserve: bigint) {
-  const bigSlippage = BigInt((100 - SLIPPAGE) * 100);
-  const res = ((tokenAmount + solReserve) * bigSlippage) / (BigInt(10000) * (tokenReserve + tokenAmount));
+  const res = (tokenAmount * solReserve) / (tokenReserve + tokenAmount);
   return res;
-}
-
-async function sellAllToken(connection: Connection, pool: PublicKey, mint: PublicKey, tokenAmount: string) {
-  const tokenATA = getAssociatedTokenAddressSync(mint, WALLET.publicKey);
-  const solATA = getAssociatedTokenAddressSync(SOL_ADDRESS, WALLET.publicKey);
-  const tokenBalance = BigInt(tokenAmount);
-  const poolKeys = await getLiquidityV4PoolKeys(connection1, pool);
-  if (poolKeys && tokenBalance > BigInt(0)) {
-    const swapInst = await getSwapTokenGivenInInstructions(WALLET.publicKey, poolKeys, mint, tokenBalance);
-    let sellInsts: TransactionInstruction[] = [];
-    sellInsts.push(
-      ComputeBudgetProgram.setComputeUnitPrice({
-        microLamports: 10000000,
-      }),
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 78000 }),
-      ...swapInst,
-      createCloseAccountInstruction(tokenATA, WALLET.publicKey, WALLET.publicKey, [])
-    );
-    let blockhash = await connection.getLatestBlockhash().then((res) => res.blockhash);
-    const newTokenTransactionMessage = new TransactionMessage({
-      payerKey: WALLET.publicKey,
-      recentBlockhash: blockhash,
-      instructions: sellInsts,
-    }).compileToV0Message();
-    const versionedNewTokenTransaction = new VersionedTransaction(newTokenTransactionMessage);
-    versionedNewTokenTransaction.sign([WALLET]);
-    const res = await connection.sendRawTransaction(versionedNewTokenTransaction.serialize(), { skipPreflight: true });
-    console.log(`Sell: sell token - ${res}`);
-    logBuyOrSellTrigeer(false, 0.058, 100, 'HOOD', '+12');
-  }
-}
-
-async function getLiquidityV4PoolKeys(connection: Connection, pool: PublicKey) {
-  try {
-    const poolAccount = await connection.getAccountInfo(pool, 'confirmed');
-    if (!poolAccount) return null;
-    const poolInfo = LIQUIDITY_STATE_LAYOUT_V4.decode(poolAccount.data);
-    if (
-      poolInfo.baseMint.toString() != SOL_ADDRESS.toString() &&
-      poolInfo.quoteMint.toString() != SOL_ADDRESS.toString()
-    ) {
-      return null;
-    }
-
-    const marketAccount = await connection.getAccountInfo(poolInfo.marketId, 'confirmed');
-    if (!marketAccount) return null;
-    const marketInfo = MARKET_STATE_LAYOUT_V3.decode(marketAccount.data);
-
-    const lpMintAccount = await connection.getAccountInfo(poolInfo.lpMint, 'confirmed');
-    if (!lpMintAccount) return null;
-    const lpMintInfo = SPL_MINT_LAYOUT.decode(lpMintAccount.data);
-
-    const poolKeys: LiquidityPoolKeys = {
-      id: pool,
-      baseMint: poolInfo.baseMint,
-      quoteMint: poolInfo.quoteMint,
-      lpMint: poolInfo.lpMint,
-      baseDecimals: poolInfo.baseDecimal,
-      quoteDecimals: poolInfo.quoteDecimal,
-      lpDecimals: lpMintInfo.decimals,
-      version: 4,
-      programId: poolAccount.owner,
-      authority: Liquidity.getAssociatedAuthority({
-        programId: poolAccount.owner,
-      }).publicKey,
-      openOrders: poolInfo.openOrders,
-      targetOrders: poolInfo.targetOrders,
-      baseVault: poolInfo.baseVault,
-      quoteVault: poolInfo.quoteVault,
-      withdrawQueue: poolInfo.withdrawQueue,
-      lpVault: poolInfo.lpVault,
-      marketVersion: 3,
-      marketProgramId: poolInfo.marketProgramId,
-      marketId: poolInfo.marketId,
-      marketAuthority: Market.getAssociatedAuthority({
-        programId: poolInfo.marketProgramId,
-        marketId: poolInfo.marketId,
-      }).publicKey,
-      marketBaseVault: marketInfo.baseVault,
-      marketQuoteVault: marketInfo.quoteVault,
-      marketBids: marketInfo.bids,
-      marketAsks: marketInfo.asks,
-      marketEventQueue: marketInfo.eventQueue,
-      lookupTableAccount: PublicKey.default,
-    };
-    return poolKeys;
-  } catch (error) {
-    console.log('Error: get poolkeys error!');
-    return null;
-  }
-}
-
-async function getSwapTokenGivenInInstructions(
-  owner: PublicKey,
-  poolKeys: LiquidityPoolKeys,
-  tokenIn: PublicKey,
-  _amountIn: bigint
-) {
-  const tokenOut = tokenIn.equals(poolKeys.baseMint) ? poolKeys.quoteMint : poolKeys.baseMint;
-  const tokenInATA = getAssociatedTokenAddressSync(tokenIn, owner);
-  const tokenOutATA = getAssociatedTokenAddressSync(tokenOut, owner);
-  const { innerTransaction } = Liquidity.makeSwapFixedInInstruction(
-    {
-      poolKeys: poolKeys,
-      userKeys: {
-        tokenAccountIn: tokenInATA,
-        tokenAccountOut: tokenOutATA,
-        owner,
-      },
-      amountIn: _amountIn,
-      minAmountOut: BigInt(0),
-    },
-    poolKeys.version
-  );
-  return [
-    createAssociatedTokenAccountIdempotentInstruction(owner, tokenOutATA, owner, tokenOut),
-    ...innerTransaction.instructions,
-  ];
 }
 
 // Performs logging to file
@@ -657,7 +760,7 @@ function logToFile(action: string, wallet: string, token: string, amount: string
 }
 
 // OB get token info
-export async function getTokenInfo(connection: Connection, mint: PublicKey) {
+async function getTokenInfo(connection: Connection, mint: PublicKey) {
   const metaplex = Metaplex.make(connection);
 
   try {
@@ -673,8 +776,12 @@ export async function getTokenInfo(connection: Connection, mint: PublicKey) {
   }
 }
 
-export function sleep(ms: number): Promise<void> {
+function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Monitor target wallet
 monitorNewToken();
+
+// Monitor whether it's profitable to sell the token
+monitorToSell();
