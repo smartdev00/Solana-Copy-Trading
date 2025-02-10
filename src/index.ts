@@ -8,33 +8,15 @@ import { Metaplex } from '@metaplex-foundation/js';
 import {
   Keypair,
   PublicKey,
-  TransactionInstruction,
-  ComputeBudgetProgram,
-  TransactionMessage,
-  VersionedTransaction,
   Connection,
   ParsedTransactionWithMeta,
   PartiallyDecodedInstruction,
   ParsedInstruction,
   ParsedAccountData,
   LAMPORTS_PER_SOL,
-  Transaction,
 } from '@solana/web3.js';
-import {
-  liquidityStateV4Layout,
-  MARKET_STATE_LAYOUT_V3,
-  SPL_MINT_LAYOUT,
-  LiquidityPoolKeys,
-  Market,
-  Raydium,
-  ApiV3PoolInfoStandardItem,
-  printSimulate,
-} from '@raydium-io/raydium-sdk-v2';
-import {
-  createAssociatedTokenAccountIdempotentInstruction,
-  createCloseAccountInstruction,
-  getAssociatedTokenAddressSync,
-} from '@solana/spl-token';
+import { liquidityStateV4Layout, Raydium, ApiV3PoolInfoStandardItem } from '@raydium-io/raydium-sdk-v2';
+import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { logBuyOrSellTrigeer, logError, logLine, logSkipped, logger, roundToDecimal } from './utils';
 import { BN } from '@coral-xyz/anchor';
 import BigNumber from 'bignumber.js';
@@ -61,7 +43,7 @@ const SOL_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112')
 const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY || ''));
 const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
 const COMPUTE_PRICE = 100000;
-const LIMIT_ORDER = 1;
+const LIMIT_ORDER = 1.25; // for test
 const SLIPPAGE = 50;
 
 const soundFilePaths = {
@@ -134,7 +116,6 @@ async function monitorNewToken() {
         // if (pool === true) {
         //   return;
         // }
-        console.log(signature);
 
         // SmartFox Identify the dex
         const dex = identifyDex(logs);
@@ -574,7 +555,7 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: numb
       slippage: 0.01,
     });
 
-    const { execute, transaction } = await raydium.liquidity.swap({
+    const { execute } = await raydium.liquidity.swap({
       poolInfo,
       poolKeys,
       amountIn: new BN(inAmount),
@@ -582,12 +563,11 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: numb
       fixedSide: 'in',
       inputMint: mintIn.address,
       computeBudgetConfig: {
-        microLamports: 100000,
+        microLamports: 1000000,
         units: 500000,
       },
     });
 
-    // printSimulate([transaction as Transaction]);
     const { txId } = await execute({ sendAndConfirm: true });
 
     if (txId) {
@@ -644,10 +624,8 @@ async function monitorToSell() {
 
             // If sell is non profitable
             if (Number(quote.outAmount) < targetAmount) {
-              console.log('Non profitable');
               return;
             }
-            console.log('profitable');
             // Sell token if its profitable
             ({ success, signature } = await jupiterSwap(
               token.mint,

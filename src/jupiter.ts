@@ -9,7 +9,6 @@ export async function getQuoteForSwap(inputAddr: string, outputAddr: string, amo
     if (quote.error) {
       throw new Error(quote.message);
     }
-    console.log('quote:', quote);
     return quote;
   } catch (error: any) {
     console.error('Error while getQuoteForSwap:', error);
