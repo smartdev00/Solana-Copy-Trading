@@ -8,33 +8,15 @@ import { Metaplex } from '@metaplex-foundation/js';
 import {
   Keypair,
   PublicKey,
-  TransactionInstruction,
-  ComputeBudgetProgram,
-  TransactionMessage,
-  VersionedTransaction,
   Connection,
   ParsedTransactionWithMeta,
   PartiallyDecodedInstruction,
   ParsedInstruction,
   ParsedAccountData,
   LAMPORTS_PER_SOL,
-  Transaction,
 } from '@solana/web3.js';
-import {
-  liquidityStateV4Layout,
-  MARKET_STATE_LAYOUT_V3,
-  SPL_MINT_LAYOUT,
-  LiquidityPoolKeys,
-  Market,
-  Raydium,
-  ApiV3PoolInfoStandardItem,
-  printSimulate,
-} from '@raydium-io/raydium-sdk-v2';
-import {
-  createAssociatedTokenAccountIdempotentInstruction,
-  createCloseAccountInstruction,
-  getAssociatedTokenAddressSync,
-} from '@solana/spl-token';
+import { liquidityStateV4Layout, Raydium, ApiV3PoolInfoStandardItem } from '@raydium-io/raydium-sdk-v2';
+import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { logBuyOrSellTrigeer, logError, logLine, logSkipped, logger, roundToDecimal } from './utils';
 import { BN } from '@coral-xyz/anchor';
 import BigNumber from 'bignumber.js';
@@ -61,7 +43,7 @@ const SOL_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112')
 const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY || ''));
 const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
 const COMPUTE_PRICE = 100000;
-const LIMIT_ORDER = 1;
+const LIMIT_ORDER = 1.25; // for test
 const SLIPPAGE = 50;
 
 const soundFilePaths = {
@@ -134,7 +116,6 @@ async function monitorNewToken() {
         // if (pool === true) {
         //   return;
         // }
-        console.log(signature);
 
         // SmartFox Identify the dex
         const dex = identifyDex(logs);
@@ -169,8 +150,8 @@ async function monitorNewToken() {
       },
       'confirmed'
     );
-  } catch (error) {
-    console.error('Error while monitorNewToken:', error);
+  } catch (error: any) {
+    logError(error.message || 'Unexpected error while monitoring target wallet.');
   }
 }
 
@@ -185,7 +166,6 @@ function identifyDex(logs: string[]) {
     }
     return null;
   } catch (error) {
-    console.error('Error while identifying dex:', error);
     return null;
   }
 }
@@ -302,7 +282,7 @@ async function calculateProfit(signature: string, token: TokenListType) {
   try {
     const transaction = await connection1.getParsedTransaction(signature, 'confirmed');
     if (!transaction) {
-      return { diffSol: 0, profit: 0 };
+      throw new Error(`No transaction with this signature: ${signature}`);
     }
 
     const swapSize = await getTradeSize(transaction, token.dex, SOL_ADDRESS, token.mint);
@@ -311,9 +291,8 @@ async function calculateProfit(signature: string, token: TokenListType) {
     const profit = ((swapSize.diffSol - usedSol) * 100) / usedSol;
 
     return { diffSol: swapSize.diffSol, profit };
-  } catch (error) {
-    console.error(error);
-    return { diffSol: 0, profit: 0 };
+  } catch (error: any) {
+    throw new Error(error.message || 'Unexpected error while calculating profit.');
   }
 }
 
@@ -326,100 +305,108 @@ async function getTradeSize(
   solAccount?: PublicKey,
   otherAccount?: PublicKey
 ) {
-  if (dex === 'Raydium') {
-    const postTokenBalances = transaction.meta?.postTokenBalances?.filter(
-      (p) => p.owner === RAYDIUM_AUTHORITY_V4.toString()
-    );
-    const preTokenBalances = transaction.meta?.preTokenBalances?.filter(
-      (p) => p.owner === RAYDIUM_AUTHORITY_V4.toString()
-    );
+  try {
+    if (dex === 'Raydium') {
+      const postTokenBalances = transaction.meta?.postTokenBalances?.filter(
+        (p) => p.owner === RAYDIUM_AUTHORITY_V4.toString()
+      );
+      const preTokenBalances = transaction.meta?.preTokenBalances?.filter(
+        (p) => p.owner === RAYDIUM_AUTHORITY_V4.toString()
+      );
 
-    const decimals = postTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.decimals || 0;
+      const decimals = postTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.decimals || 0;
 
-    const diffSol = new BigNumber(
-      postTokenBalances?.find((p) => p.mint === solAccount?.toString())?.uiTokenAmount.uiAmount || 0
-    )
-      .minus(
-        new BigNumber(preTokenBalances?.find((p) => p.mint === solAccount?.toString())?.uiTokenAmount.uiAmount || 0)
+      const diffSol = new BigNumber(
+        postTokenBalances?.find((p) => p.mint === solAccount?.toString())?.uiTokenAmount.uiAmount || 0
       )
-      .toNumber();
+        .minus(
+          new BigNumber(preTokenBalances?.find((p) => p.mint === solAccount?.toString())?.uiTokenAmount.uiAmount || 0)
+        )
+        .toNumber();
 
-    const diffOther = new BigNumber(
-      postTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0
-    )
-      .minus(
-        new BigNumber(preTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0)
+      const diffOther = new BigNumber(
+        postTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0
       )
-      .toNumber();
+        .minus(
+          new BigNumber(preTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0)
+        )
+        .toNumber();
 
-    return {
-      diffSol: Math.abs(roundToDecimal(diffSol)),
-      diffOther: Math.abs(roundToDecimal(diffOther, decimals)),
-      isBuy: diffSol > 0 ? true : false,
-    };
-  } else {
-    const transfers = getJupiterTransfers(transaction);
+      return {
+        diffSol: Math.abs(roundToDecimal(diffSol)),
+        diffOther: Math.abs(roundToDecimal(diffOther, decimals)),
+        isBuy: diffSol > 0 ? true : false,
+      };
+    } else {
+      const transfers = getJupiterTransfers(transaction);
 
-    const [tokenIn, tokenOut] = await Promise.all([
-      getTokenMintAddress(transfers[0].source, transfers[0].destination),
-      getTokenMintAddress(transfers[1].source, transfers[1].destination),
-    ]);
+      const [tokenIn, tokenOut] = await Promise.all([
+        getTokenMintAddress(transfers[0].source, transfers[0].destination),
+        getTokenMintAddress(transfers[1].source, transfers[1].destination),
+      ]);
 
-    const diffSol =
-      tokenIn?.mint === SOL_ADDRESS.toString()
-        ? (transfers[0].amount as number) / LAMPORTS_PER_SOL
-        : (transfers[1].amount as number) / LAMPORTS_PER_SOL;
+      const diffSol =
+        tokenIn?.mint === SOL_ADDRESS.toString()
+          ? (transfers[0].amount as number) / LAMPORTS_PER_SOL
+          : (transfers[1].amount as number) / LAMPORTS_PER_SOL;
 
-    const diffOther =
-      tokenIn?.mint === SOL_ADDRESS.toString()
-        ? (transfers[1].amount as number) / 10 ** (tokenOut?.decimals || 0)
-        : (transfers[0].amount as number) / 10 ** (tokenIn?.decimals || 0);
+      const diffOther =
+        tokenIn?.mint === SOL_ADDRESS.toString()
+          ? (transfers[1].amount as number) / 10 ** (tokenOut?.decimals || 0)
+          : (transfers[0].amount as number) / 10 ** (tokenIn?.decimals || 0);
 
-    return {
-      diffSol: Math.abs(roundToDecimal(diffSol)),
-      diffOther: Math.abs(roundToDecimal(diffOther)),
-      isBuy: diffSol > 0 ? true : false,
-    };
+      return {
+        diffSol: Math.abs(roundToDecimal(diffSol)),
+        diffOther: Math.abs(roundToDecimal(diffOther)),
+        isBuy: diffSol > 0 ? true : false,
+      };
+    }
+  } catch (error: any) {
+    throw new Error(error.message || 'Unexpected error while calculating trade size.');
   }
 }
 
 // Get the first and last transfers
 function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
-  const instructions = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
-  const swapIxIdx = instructions.findIndex((ix) => {
-    return ix.programId.equals(JUPITER_AGGREGATOR_V6);
-  });
+  try {
+    const instructions = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
+    const swapIxIdx = instructions.findIndex((ix) => {
+      return ix.programId.equals(JUPITER_AGGREGATOR_V6);
+    });
 
-  if (swapIxIdx === -1) {
-    throw new Error('Non Jupiter Swap');
-  }
-
-  const transfers: any[] = [];
-  transaction.meta?.innerInstructions?.forEach((instruction) => {
-    if (instruction.index <= swapIxIdx) {
-      (instruction.instructions as ParsedInstruction[]).forEach((ix) => {
-        if (ix.parsed?.type === 'transfer' && ix.parsed.info.amount) {
-          transfers.push({
-            amount: ix.parsed.info.amount,
-            source: ix.parsed.info.source,
-            destination: ix.parsed.info.destination,
-          });
-        } else if (ix.parsed?.type === 'transferChecked' && ix.parsed.info.tokenAmount.amount) {
-          transfers.push({
-            amount: ix.parsed.info.tokenAmount.amount,
-            source: ix.parsed.info.source,
-            destination: ix.parsed.info.destination,
-          });
-        }
-      });
+    if (swapIxIdx === -1) {
+      throw new Error('Non Jupiter Swap');
     }
-  });
 
-  if (transfers.length < 2) {
-    throw new Error('Invalid Jupiter Swap');
+    const transfers: any[] = [];
+    transaction.meta?.innerInstructions?.forEach((instruction) => {
+      if (instruction.index <= swapIxIdx) {
+        (instruction.instructions as ParsedInstruction[]).forEach((ix) => {
+          if (ix.parsed?.type === 'transfer' && ix.parsed.info.amount) {
+            transfers.push({
+              amount: ix.parsed.info.amount,
+              source: ix.parsed.info.source,
+              destination: ix.parsed.info.destination,
+            });
+          } else if (ix.parsed?.type === 'transferChecked' && ix.parsed.info.tokenAmount.amount) {
+            transfers.push({
+              amount: ix.parsed.info.tokenAmount.amount,
+              source: ix.parsed.info.source,
+              destination: ix.parsed.info.destination,
+            });
+          }
+        });
+      }
+    });
+
+    if (transfers.length < 2) {
+      throw new Error('Invalid Jupiter Swap');
+    }
+
+    return [transfers[0], transfers[transfers.length - 1]];
+  } catch (error: any) {
+    throw new Error(error.message || 'Unexpected error while extracting transfers from jupiter dex.');
   }
-
-  return [transfers[0], transfers[transfers.length - 1]];
 }
 
 /**
@@ -520,7 +507,6 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
       } as AnalyzeType;
     }
   } catch (error: any) {
-    console.error(error);
     throw new Error(error.message || 'Unexpected error while analyzing transaction.');
   }
 }
@@ -538,9 +524,8 @@ async function getTokenMintAddress(source: string, destination: string) {
       decimals: Number(tokenInfo?.tokenAmount?.decimals),
       symbol,
     };
-  } catch (error) {
-    console.error(error);
-    return null;
+  } catch (error: any) {
+    throw new Error(error.message || 'Unexpected error while fetching token mint address.');
   }
 }
 
@@ -574,7 +559,7 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: numb
       slippage: 0.01,
     });
 
-    const { execute, transaction } = await raydium.liquidity.swap({
+    const { execute } = await raydium.liquidity.swap({
       poolInfo,
       poolKeys,
       amountIn: new BN(inAmount),
@@ -582,12 +567,11 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: numb
       fixedSide: 'in',
       inputMint: mintIn.address,
       computeBudgetConfig: {
-        microLamports: 100000,
+        microLamports: 1000000,
         units: 500000,
       },
     });
 
-    // printSimulate([transaction as Transaction]);
     const { txId } = await execute({ sendAndConfirm: true });
 
     if (txId) {
@@ -596,7 +580,6 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: numb
       return { success: false, signature: null };
     }
   } catch (error: any) {
-    console.error('Error: buy on raydium', error);
     throw new Error(error.message || 'Unexpected error while swapping on Raydium');
   }
 }
@@ -620,7 +603,6 @@ async function jupiterSwap(mintIn: PublicKey, mintOut: PublicKey, inAmount: numb
       return { success, signature: null };
     }
   } catch (error: any) {
-    console.error(error);
     throw new Error(error.message || 'Unexpected error while swapping on Jupiter.');
   }
 }
@@ -644,10 +626,8 @@ async function monitorToSell() {
 
             // If sell is non profitable
             if (Number(quote.outAmount) < targetAmount) {
-              console.log('Non profitable');
               return;
             }
-            console.log('profitable');
             // Sell token if its profitable
             ({ success, signature } = await jupiterSwap(
               token.mint,
@@ -690,8 +670,8 @@ async function monitorToSell() {
       }
       await sleep(5000);
     }
-  } catch (error) {
-    console.error(error);
+  } catch (error: any) {
+    logError(error.message || 'Unexpected error while monitoring the point to sell token.');
   }
 }
 
@@ -707,8 +687,8 @@ async function isProfitable(mint: PublicKey, pool: PublicKey) {
       return true;
     }
     return false;
-  } catch {
-    return false;
+  } catch (error: any) {
+    throw new Error(error.message || 'Unexpected error while calculating the profitability.');
   }
 }
 
@@ -731,8 +711,7 @@ async function getReserves(mint: PublicKey, pool: PublicKey) {
     const solReserve = BigInt(quoteData['parsed']['info']['tokenAmount']['amount']);
     return [solReserve, baseReserve];
   } catch (error: any) {
-    console.error(error);
-    throw new Error(error.message || 'Unexpected error');
+    throw new Error(error.message || 'Unexpected error while fetching reserves of pool.');
   }
 }
 
@@ -742,14 +721,13 @@ async function getATABalance(mint: PublicKey, owner: PublicKey) {
     const tokenBalanceString = (await connection1.getTokenAccountBalance(mintATA)).value.amount;
     return BigInt(tokenBalanceString);
   } catch (error: any) {
-    console.error(error);
-    throw new Error(error.message || 'Unexpected error.');
+    throw new Error(error.message || 'Unexpected error while fetching ATA balance.');
   }
 }
 
 function expectAmountOut(tokenAmount: bigint, tokenReserve: bigint, solReserve: bigint) {
-  const res = (tokenAmount * solReserve) / (tokenReserve + tokenAmount);
-  return res;
+  const outAmount = (tokenAmount * solReserve) / (tokenReserve + tokenAmount);
+  return outAmount;
 }
 
 // Performs logging to file
@@ -771,8 +749,8 @@ async function getTokenInfo(connection: Connection, mint: PublicKey) {
       address: tokenMetadata.address.toString(),
       decimals: tokenMetadata.mint.decimals,
     };
-  } catch (error) {
-    console.error('Error fetching token metadata:', error);
+  } catch (error: any) {
+    throw new Error(error.message || 'Unexpected error while fetching information of token.');
   }
 }
 
@@ -780,8 +758,9 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// Monitor target wallet
+// Monitor target wallet's trade
 monitorNewToken();
 
-// Monitor whether it's profitable to sell the token
+// Monitor whether it's profitable to sell the token.
+// If so perform tradingm otherwise skip.
 monitorToSell();
