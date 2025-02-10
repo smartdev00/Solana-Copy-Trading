@@ -45,6 +45,7 @@ const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
 const COMPUTE_PRICE = 100000;
 const LIMIT_ORDER = 1.25; // for test
 const SLIPPAGE = 50;
+const ERROR_SOUND_SKIP_TIME = 10000;
 
 const soundFilePaths = {
   botStart: path.join(__dirname, '../sounds/bot-start.mp3'),
@@ -52,9 +53,12 @@ const soundFilePaths = {
   buyTradeCopied: path.join(__dirname, '../sounds/bot-buy-trade-copied.mp3'),
   sellTrade: path.join(__dirname, '../sounds/bot-sell-trade.mp3'),
   sellTradeCopied: path.join(__dirname, '../sounds/bot-sell-trade-copied.mp3'),
+  botError: path.join(__dirname, '../sounds/bot-error.mp3'),
 };
 
-// sound.play(soundFilePaths.botStart);
+sound.play(soundFilePaths.botStart);
+
+let prevError = '';
 
 /*
  * Stores timestamp when the app started
@@ -151,7 +155,22 @@ async function monitorNewToken() {
       'confirmed'
     );
   } catch (error: any) {
-    logError(error.message || 'Unexpected error while monitoring target wallet.');
+    handleError(error.message || 'Unexpected error while monitoring target wallet.');
+  }
+}
+
+async function handleError(error: string) {
+  try {
+    logError(error); // Await logError if it's asynchronous
+    if (prevError !== error) {
+      sound.play(soundFilePaths.botError); // Await sound.play if it's asynchronous
+      prevError = error;
+      setTimeout(() => {
+        prevError = '';
+      }, ERROR_SOUND_SKIP_TIME);
+    }
+  } catch (err) {
+    console.error('Error handling error:', err); // Log any errors that occur
   }
 }
 
@@ -187,12 +206,10 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
     if (solDiff !== 0 && solDiff * LAMPORTS_PER_SOL < TARGET_WALLET_MIN_TRADE) {
       logSkipped(solDiff);
       logLine();
-      sound.play(soundFilePaths.buyTrade);
+      // sound.play(soundFilePaths.buyTrade);
       return;
     }
     logLine();
-
-    // sound.play(soundFilePaths.buyTradeCopied);
 
     let swapResult: { success: boolean; signature: string | null } = {
       success: false,
@@ -201,6 +218,7 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 
     // Copy the buy action of target wallet
     if (analyze.type === 'Buy') {
+      // sound.play(soundFilePaths.buyTradeCopied);
       const mintOut = new PublicKey(analyze.to.token_address);
 
       // Execute the purchase transaction
@@ -234,11 +252,13 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 
         // If purchase failed
       } else {
-        logError('Purchase failed');
+        handleError('Purchase failed');
       }
 
       // Copy the sell action of target wallet
     } else if (analyze.type === 'Sell') {
+      // sound.play(soundFilePaths.sellTradeCopied);
+
       const mintIn = new PublicKey(analyze.from.token_address);
 
       // Find the index of token in token list
@@ -270,11 +290,11 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 
         // If sale failed
       } else {
-        logError('Sale failed');
+        handleError('Sale failed');
       }
     }
   } catch (error: any) {
-    logError(error.message || 'Unexpected error while processing the transaction.');
+    handleError(error.message || 'Unexpected error while processing the transaction.');
   }
 }
 
@@ -628,6 +648,8 @@ async function monitorToSell() {
             if (Number(quote.outAmount) < targetAmount) {
               return;
             }
+
+            // sound.play(soundFilePaths.sellTrade);
             // Sell token if its profitable
             ({ success, signature } = await jupiterSwap(
               token.mint,
@@ -644,6 +666,7 @@ async function monitorToSell() {
             if (!pool || (pool && !(await isProfitable(mint, new PublicKey(pool))))) {
               return;
             }
+            // sound.play(soundFilePaths.sellTrade);
 
             ({ success, signature } = await raydiumSwap(
               mint,
@@ -660,7 +683,7 @@ async function monitorToSell() {
 
             // If sale failed
           } else {
-            logError('Sale failed');
+            handleError('Sale failed');
           }
         })
       );
@@ -671,7 +694,7 @@ async function monitorToSell() {
       await sleep(5000);
     }
   } catch (error: any) {
-    logError(error.message || 'Unexpected error while monitoring the point to sell token.');
+    handleError(error.message || 'Unexpected error while monitoring the point to sell token.');
   }
 }
 
