@@ -2,7 +2,7 @@
 
 ## Overview
 
-The **Solana Copy Trading Bot** is an advanced automated trading solution that **mirrors token swaps** (buy and sell trades) from specific **target Solana wallets** in real time. The bot integrates with **Raydium and Jupiter decentralized exchanges (DEXs)**, monitoring wallet activity and executing trades based on pre-defined user parameters.
+The **Solana Copy Trading Bot** is an advanced automated trading solution that **mirrors token swaps** (buy and sell trades) from a specific **target Solana wallet** in real time. The bot integrates with **Raydium and Jupiter decentralized exchanges (DEXs)**, monitoring wallet activity and executing trades based on pre-defined user parameters.
 
 Designed to be **fast, efficient, and customizable**, the bot is intended for **Windows users** with **basic to intermediate technical knowledge**.
 
@@ -11,7 +11,7 @@ Designed to be **fast, efficient, and customizable**, the bot is intended for **
 ## Features
 
 - **Real-Time Trade Copying**:
-  - Monitors up to **four target wallets** simultaneously.
+  - Monitors **a single target Solana wallet** for buy/sell activity.
   - Detects **buy/sell swaps** on both **Raydium and Jupiter** DEXs.
   - Executes copy trades instantly if the trade size threshold is met.
 
