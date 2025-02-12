@@ -23,7 +23,20 @@ import BigNumber from 'bignumber.js';
 import { executeTransaction, getDeserialize, getQuoteForSwap, getSerializedTransaction } from './jupiter';
 import { TokenListType, AnalyzeType } from './types';
 
-dotenv.config({ path: './.env' });
+if (process.argv.length !== 3) {
+  console.error('Error launching app:');
+  console.error('Application requires exactly one command-line parameter which must be a path to configuration file.');
+  console.error('For example `npm run start config.env`');
+  process.exit();
+}
+
+const pathToConfigurationFile = path.join(__dirname, process.argv[2]);
+if (!fs.existsSync(pathToConfigurationFile)) {
+  console.error('Error launching app:');
+  console.error(`Configuration file ${pathToConfigurationFile} not found.`);
+  process.exit();
+}
+dotenv.config({ path: pathToConfigurationFile });
 
 // Initialize parameters from environment variables
 const connection1 = new Connection(process.env.CONNECTION_URL_1 || '', {
@@ -197,6 +210,22 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
     // SmartFox Analyze transaction, get poolAccount, solAccount and tokenAccount account
     const analyze = await analyzeTransaction(transaction, signature, dex);
 
+    logToFile(
+      analyze.type,
+      TARGET_WALLET_ADDRESS.toString(),
+      analyze.dex,
+      analyze.type === 'Buy'
+        ? analyze.to.token_address
+        : analyze.type === 'Sell'
+        ? analyze.from.token_address
+        : analyze.from.token_address + analyze.to.token_address,
+      analyze.type === 'Buy'
+        ? analyze.from.amount.toString()
+        : analyze.type === 'Sell'
+        ? analyze.to.amount.toString()
+        : '',
+      'Monitored new transaction'
+    );
     logger(analyze);
     let solDiff = 0;
     if (analyze.type === 'Buy') solDiff = analyze.from.amount;
@@ -205,6 +234,22 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
     // Skip trades below the minimum threshold
     if (solDiff !== 0 && solDiff * LAMPORTS_PER_SOL < TARGET_WALLET_MIN_TRADE) {
       logSkipped(solDiff);
+      logToFile(
+        'Skipped',
+        TARGET_WALLET_ADDRESS.toString(),
+        analyze.dex,
+        analyze.type === 'Buy'
+          ? analyze.to.token_address
+          : analyze.type === 'Sell'
+          ? analyze.from.token_address
+          : analyze.from.token_address + analyze.to.token_address,
+        analyze.type === 'Buy'
+          ? analyze.from.amount.toString()
+          : analyze.type === 'Sell'
+          ? analyze.to.amount.toString()
+          : '',
+        'Below minimum trade size'
+      );
       logLine();
       // sound.play(soundFilePaths.buyTrade);
       return;
@@ -248,6 +293,15 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
           pool: analyze.pool_address,
         });
 
+        logToFile(
+          'Buy Success',
+          TARGET_WALLET_ADDRESS.toString(),
+          analyze.dex,
+          mintOut.toString(),
+          swapSize.diffSol.toString(),
+          'Succeed copying buy.'
+        );
+
         logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, swapSize.diffOther, analyze.to.symbol); // Log the purchase success message
 
         // If purchase failed
@@ -287,6 +341,14 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
         logBuyOrSellTrigeer(false, diffSol, token.amount, analyze.to.symbol, profit.toString()); // Log sale success message
 
         buyTokenList.splice(index, 1); // Remove the token from buy list
+        logToFile(
+          'Sell Success',
+          TARGET_WALLET_ADDRESS.toString(),
+          analyze.dex,
+          mintIn.toString(),
+          diffSol.toString(),
+          'Succeed copying sell.'
+        );
 
         // If sale failed
       } else {
@@ -680,6 +742,14 @@ async function monitorToSell() {
             logBuyOrSellTrigeer(false, diffSol, token.amount, token.symbol, profit.toString()); // Log sale success message
 
             indexesToDel.unshift(index); // Add index of item to remove
+            logToFile(
+              'Sell Success',
+              TARGET_WALLET_ADDRESS.toString(),
+              token.dex,
+              token.mint.toString(),
+              diffSol.toString(),
+              'Auto sell triggered'
+            );
 
             // If sale failed
           } else {
@@ -754,9 +824,9 @@ function expectAmountOut(tokenAmount: bigint, tokenReserve: bigint, solReserve: 
 }
 
 // Performs logging to file
-function logToFile(action: string, wallet: string, token: string, amount: string, reason = '') {
+function logToFile(action: string, wallet: string, dex: string, token: string, amount: string, reason: string) {
   const timestamp = new Date().toISOString();
-  const logEntry = `${timestamp},${action},${wallet},${token},${amount},${reason}\n`;
+  const logEntry = `${timestamp},${action},${wallet},${dex},${token},${amount},${reason}\n`;
   fs.appendFileSync(LOG_FILE, logEntry);
 }
 
