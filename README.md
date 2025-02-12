@@ -24,7 +24,7 @@ Designed to be **fast, efficient, and customizable**, the bot is intended for **
 - **Smart Notifications & Logs**:
   - **Enhanced command prompt interface** with **color-coded logs** (via Chalk.js).
   - **Sound alerts for trade events** (optional mute feature included).
-  - **Detailed log reporting** for all trades, skipped trades, and errors.
+  - **Detailed log reporting** for all trades, skipped trades, and errors in CSV format (compatible with Excel for easy analysis).
 
 - **Customizable Settings**:
   - Define trade size per transaction.
@@ -34,6 +34,7 @@ Designed to be **fast, efficient, and customizable**, the bot is intended for **
 - **Fast & Efficient**:
   - Optimized for **low latency trade execution**.
   - Uses the **Helius WebSockets API** for real-time transaction detection.
+  - **Monitors live token prices via Helius RPC** to track Take Profit thresholds.
 
 ---
 
@@ -43,7 +44,6 @@ Designed to be **fast, efficient, and customizable**, the bot is intended for **
 - **Windows Pro PC**
 - **Software Dependencies:**
   - Node.js **(v16 or higher)**
-  - TypeScript
   - Yarn (optional, if preferred over npm)
 - **Solana Wallet:**
   - A **private Solana wallet** for executing trades.
@@ -102,6 +102,10 @@ npm install
    npm run start ../my_config.env
    ```
 
+**Multiple Instances:**
+- You **can run multiple instances of the bot** to track different target wallets.
+- You **can use the same Helius API key for all instances.**
+
 You should see output similar to:
 ```
 ------------------------------------------------------------
@@ -141,6 +145,10 @@ You should see output similar to:
 
 3. **Jupiter DEX Support**:
    - The bot **now detects and copies trades** on both **Raydium and Jupiter**.
+
+4. **CSV Logging Feature**:
+   - Every trade, skipped trade, and reason for not copying is now logged in a CSV file.
+   - Compatible with **Excel for easy trade analysis**.
 
 ---
 
