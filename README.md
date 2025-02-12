@@ -2,258 +2,170 @@
 
 ## Overview
 
-The Solana Copy Trading Bot is an automated trading solution designed to replicate token buy and sell trades from specific Solana wallets in real time. The bot leverages the Solana blockchain’s capabilities along with the Helius API to monitor target wallets and execute trades based on pre-defined rules such as Take Profit (TP). The bot is designed for Windows environments and is suitable for users with basic to intermediate technical knowledge.
+The **Solana Copy Trading Bot** is an advanced automated trading solution that **mirrors token swaps** (buy and sell trades) from a specific **target Solana wallet** in real time. The bot integrates with **Raydium and Jupiter decentralized exchanges (DEXs)**, monitoring wallet activity and executing trades based on pre-defined user parameters.
+
+Designed to be **fast, efficient, and customizable**, the bot is intended for **Windows users** with **basic to intermediate technical knowledge**.
 
 ---
 
 ## Features
 
 - **Real-Time Trade Copying**:
-  - Monitors a single target Solana wallet for buy/sell activity.
-  - Automatically replicates trades on your designated wallet.
+  - Monitors **a single target Solana wallet** for buy/sell activity.
+  - Detects **buy/sell swaps** on both **Raydium and Jupiter** DEXs.
+  - Executes copy trades instantly if the trade size threshold is met.
 
-- **Customizable Trade Parameters**:
-  - Define trade size.
-  - Set Take Profit (TP) thresholds for trades.
-  - Define a minimum trade size threshold for copying target wallet trades.
+- **Automated Trade Execution**:
+  - **BUY:** Automatically purchases the same tokens as the target wallet **if trade threshold is met**.
+  - **SELL:** Automatically sells when:
+    - The target wallet sells the token.
+    - The **Take Profit (TP)** price target is hit.
 
-- **Transaction Safety**:
-  - Only sells tokens if:
-    - The source wallet sells the token.
-    - TP targets are triggered.
-	- 100% of the token held in your wallet is sold when the tracked wallet sells the same token.
+- **Smart Notifications & Logs**:
+  - **Enhanced command prompt interface** with **color-coded logs** (via Chalk.js).
+  - **Sound alerts for trade events** (optional mute feature included).
+  - **Detailed log reporting** for all trades, skipped trades, and errors in CSV format (compatible with Excel for easy analysis).
 
-- **Support for Liquidity Pools**:
-  - Integrates with Raydium Liquidity Pool for token swaps (does not trade on riskier marketplaces such as pump.fun).
+- **Customizable Settings**:
+  - Define trade size per transaction.
+  - Set a **Take Profit (TP) threshold** to automate profit-taking.
+  - Adjustable **minimum trade size** to filter out small trades.
 
-- **Ease of Use**:
-  - Configuration via `.env` and `config.ts` files.
-  - Human-readable JSON logs for tracking trades.
-
-- **Utilises Wrapped Solana (WSOL)**:
-  - The bot uses WSOL for all trading activities. Ensure your wallet has sufficient WSOL before running the bot.
-  - Refer to the [Copy Trading - Prepare Wallet with WSOL](copy-trading-get-wsol.pdf) guide for detailed steps to prepare your wallet.
+- **Fast & Efficient**:
+  - Optimized for **low latency trade execution**.
+  - Uses the **Helius WebSockets API** for real-time transaction detection.
+  - **Monitors live token prices via Helius RPC** to track Take Profit thresholds.
 
 ---
 
 ## Prerequisites
 
-To run the Solana Copy Trading Bot, ensure you have the following:
-
-1. **Windows Pro PC**
-2. **Software Requirements**:
-   - Node.js (v16 or higher)
-   - TypeScript
-   - Yarn (optional, if preferred over npm)
-3. **Accounts and API Keys**:
-   - A Solana wallet (private key required).
-   - Helius RPC API key (for blockchain interaction).
-4. **Dependencies**:
-   - `@solana/web3.js`
-   - `@raydium-io/raydium-sdk`
-   - `dotenv`
-   - `bs58`
+### **System Requirements**
+- **Windows Pro PC**
+- **Software Dependencies:**
+  - Node.js **(v16 or higher)**
+  - Yarn (optional, if preferred over npm)
+- **Solana Wallet:**
+  - A **private Solana wallet** for executing trades.
+  - Ensure the wallet is funded with **WSOL (Wrapped Solana)** for trading.
+- **Helius API Key**:
+  - Required to connect to the Solana blockchain and fetch transaction data.
 
 ---
 
 ## Setup Instructions
 
-### Step 1: Install Required Software
+### **Step 1: Install Required Software**
 
 1. Download and install [Node.js](https://nodejs.org/).
 2. Verify installation:
-   ```
+   ```bash
    node -v
    npm -v
    ```
 
-### Step 2: Clone the Repository
+### **Step 2: Clone the Repository**
 
-1. Clone the repository to your local machine:
-   ```
-   git clone <repository-url>
-   ```
-2. Navigate to the project directory:
-   ```
-   cd copy-trading-bot
-   ```
-
-After cloning the repository, the folder structure will look like this:
-
-```plaintext
-copy-trading-bot/
-├── src/
-│   ├── config.ts
-│   ├── index.ts
-├── sounds/
-│   ├── bot-start.wav
-│   ├── bot-error.wav
-│   ├── bot-buy-trade.wav
-│   ├── bot-buy-trade-copied.wav
-│   ├── bot-sell-trade.wav
-│   ├── bot-sell-trade-copied.wav
-├── .env.sample
-├── README.md
-├── tsconfig.json
-├── package.json
-├── package-lock.json
-├── .gitignore
+```bash
+git clone <repository-url>
+cd copy-trading-bot
 ```
 
-### Step 3: Install Dependencies
+### **Step 3: Install Dependencies**
 
-Run the following command to install all required dependencies:
-```
+```bash
 npm install
 ```
 
-### Step 4: Configure the Bot
+### **Step 4: Configure the Bot**
 
-1. Copy `.env.sample` to a file with another name and extension `.env`, e. g. `.env` or `my_config.env` or any other name you like (`my_config.env` is used throughout of this guide).
-Extension `.env` ensures this file will not be tracked by Git according to `.gitignore` file rules.
+1. Copy the sample environment file:
    ```bash
    cp .env.sample my_config.env
    ```
-2. Open `my_config.env` and fill in the required details:
-   - `CONNECTION_URL_1`: Replace the placeholder API key with your actual Helius API key.
-   - `CONNECTION_URL_2`: Replace the placeholder API key with your actual Helius API key.
+2. Open `my_config.env` and configure your settings:
+   - `CONNECTION_URL`: Your **Helius RPC API key**.
    - `TARGET_WALLET_ADDRESS`: Public key of the wallet to copy trades from.
-   - `WALLET_PRIVATE_KEY`: Replace with your private key (base58-encoded).
-   - `TRADE_AMOUNT`: Replace with your desired amount of individual trade, in lamports.
+   - `WALLET_PRIVATE_KEY`: **Base58-encoded private key** of your wallet.
+   - `TRADE_AMOUNT`: **Trade size per transaction** (in lamports).
+   - `TAKE_PROFIT`: **Take profit threshold** (e.g., `1.25` for 25% profit).
+   - `MUTE_SOUNDS`: Set to `true` to disable sound alerts.
 
-The bot's configuration follows this flow:
-- `my_config.env`: Contains sensitive and private information such as API keys, target wallet address, and wallet private key. This file is stored locally and not shared on GitHub.
-- `index.ts`: Main bot logic file that uses parameters defined in `my_config.env` to perform trading actions.
+### **Step 5: Running the Bot**
 
-### Step 5: Install TypeScript
-
-1. Ensure TypeScript is installed globally by running:
-   ```
-   tsc --version
-   ```
-2. If TypeScript is not recognized, install it globally:
-   ```
-   npm install -g typescript
-   ```
-3. Verify the installation by running:
-   ```
-   tsc --version
-   ```
-
-### Step 6: Running the Bot
-
-1. Build the project: compile the TypeScript code into JavaScript to generate the `dist` folder and compiled `.js` files:
-   ```
+1. Build the project:
+   ```bash
    npm run build
    ```
-2. Verify that the `dist` folder is created and contains the compiled `.js` files.
+2. Start the bot with your configuration:
+   ```bash
+   npm run start ../my_config.env
+   ```
 
-2. Run the bot specifying path to your configuration file `my_config.env` (or whatever name you have chosen at step 4.1).
-Note that the bot is running in its own `dist` folder, therefore you need to specify that configuration file is located in parent folder using `..` notation:
-```bash
-npm run start ../my_config.env
+**Multiple Instances:**
+- You **can run multiple instances of the bot** to track different target wallets.
+- You **can use the same Helius API key for all instances.**
+
+You should see output similar to:
 ```
-
-3. You should see a message similar to:
-   ```
-   Waiting to copy trade wallet ...PNAQ3
-   ```
+------------------------------------------------------------
+🛠  BOT INITIALIZED
+🔍 Monitoring Target Wallet: [wallet address]
+🔹 Min Trade Size: 0.01 SOL | Trading Amount: 0.005 SOL
+------------------------------------------------------------
+```
 
 ---
 
 ## Configuration Guide
 
-### Key Parameters in `.env.sample`
+### **Key Parameters in `.env.sample`**
 
 | Parameter              | Description                                                                                  |
 |------------------------|----------------------------------------------------------------------------------------------|
 | `TARGET_WALLET_ADDRESS`| The wallet address to monitor for trades.                                                   |
-| `TARGET_WALLET_MIN_TRADE` | Minimum trade size (in lamports) to copy. Trades below this value will be ignored.          |
+| `TARGET_WALLET_MIN_TRADE` | Minimum trade size (in lamports) to copy. Trades below this value are ignored.               |
 | `TRADE_AMOUNT`         | Amount to trade per transaction (in lamports; 1 WSOL = 1,000,000,000 lamports).             |
-| `RAYDIUM_LIQUIDITYPOOL_V4` | Static variable for the Raydium Liquidity Pool.                                             |
+| `RAYDIUM_LIQUIDITYPOOL` | Static variable for the Raydium Liquidity Pool.                                             |
 | `SOL_ADDRESS`          | Static variable for the wrapped Solana token address.                                        |
 | `WALLET`               | Your trading wallet’s private key in base58 format.                                         |
-| `COMPUTE_PRICE`        | A static variable for internal calculations (default: `100000`).                            |
-| `LIMIT_ORDER`          | Multiplier for setting Take Profit (TP) above the buy price (e.g., `1.25` for 25% profit).  |
-| `SLIPPAGE`             | Maximum allowable price variation during trade execution (default: `5`).                    |
+| `TAKE_PROFIT`          | Profit threshold above the buy price (e.g., `1.25` for 25% profit).                         |
+| `MUTE_SOUNDS`          | Set `true` to disable sound notifications.                                                   |
 
 ---
 
-## Usage
+## Recent Improvements (Updated February 10, 2025)
 
-1. Ensure the bot is running by executing:
-   ```bash
-   npm run start ../my_config.env
-   ```
-2. Monitor the console for real-time logs of:
-   - Tokens bought and sold.
-   - Current holdings and performance.
+1. **Enhanced Command Prompt Interface**:
+   - Clean and human-readable output with **color-coded logs** (via Chalk.js).
 
-3. Edit `my_config.env` to adjust trade parameters and restart the bot if changes are made.
+2. **Sound Notifications**:
+   - All **audio notifications** (bot start, buy detected, buy copied, sell detected, errors) have been **fully implemented**.
+   - Error sound now repeats **only every 10 seconds** to prevent spam.
 
----
+3. **Jupiter DEX Support**:
+   - The bot **now detects and copies trades** on both **Raydium and Jupiter**.
 
-## Troubleshooting
-
-| Issue                                     | Solution                                                                              |
-|-------------------------------------------|--------------------------------------------------------------------------------------|
-| Bot fails to start                        | Verify Node.js and TypeScript installations. Ensure dependencies are installed.       |
-| Transactions not being copied             | Check `TARGET_WALLET_ADDRESS` and ensure the Helius API key is valid.                 |
-| Unexpected token behavior                 | Ensure `TRADE_AMOUNT` is correctly set in lamports.                                   |
-| Logs not updating                         | Check the bot’s connection to the Solana network. Restart if necessary.               |
-
----
-
-## Example Copy Trades
-
-Below are screenshots illustrating the bot correctly tracking and copying trades from the target wallet:
-
-1. **Copy Trade Example 1**: The tracked wallet buys the `amigo` token by swapping WSOL. The bot copies this trade shortly afterward.
-
-   ![Copy Trading Example 1](copy-trading-example1.png)
-
-2. **Copy Trade Example 2**: The tracked wallet buys the `KAN` token by swapping WSOL. The bot copies this trade shortly afterward.
-
-   ![Copy Trading Example 2](copy-trading-example2.png)
-
----
-
-## Recent Improvements (Updated January 10, 2025)
-
-1. **Minimum Value of Target Wallet Trade**:
-   - The bot now includes the ability to filter trades based on a configurable minimum trade size (e.g., `TARGET_WALLET_MIN_TRADE`). Trades below this threshold will be ignored, ensuring only "high commitment" trades are copied.
-   
-2. **Target Wallet Check Interval**:
-   - The interval for checking the target wallet's activity has been changed from 400 milliseconds to 5 seconds (5000 milliseconds). This reduces API usage and ensures more efficient monitoring while maintaining timely updates.
-
-3. **Historical Transaction Filtering**:
-   - The bot now includes timestamp filtering logic to ensure only new transactions are processed. Historical transactions that occurred before the bot started running are ignored.
-  
-4. **Log Reporting**:
-   - The bot now logs all trades and reasons for non-copied trades in CSV format. This includes timestamps, actions, wallet addresses, token details, amounts, and explanatory reasons. The log file can be opened in Excel for easy analysis.
-
-5. **Sound Alerts**:
-  - Audio notifications added for significant events (e.g., bot start, trades detected, errors).
+4. **CSV Logging Feature**:
+   - Every trade, skipped trade, and reason for not copying is now logged in a CSV file.
+   - Compatible with **Excel for easy trade analysis**.
 
 ---
 
 ## Future Improvements
 
-1. **Masking Bot Trades from Target Wallet**:
-   - Consider advanced strategies for "front-running mitigation" or "transaction privacy," that can help obfuscate or disguise the activities of our bot (refer to Solana-Copy-Trading-Bot-Masking-Trades.pdf) for concepts.
+1. **Multi-Wallet Support**
+   - Ability to **copy trade multiple wallets simultaneously** in a single instance.
 
-2. **Support for Multiple Wallets**:
-   - Enable tracking and copying trades from multiple Solana wallets simultaneously.
+2. **Liquidity-Based Trade Filtering**
+   - Ensure sufficient liquidity exists before executing copy trades.
 
-3. **Optional Token Liquidity Check**:
-   - Implement a feature to evaluate token liquidity during tracked wallet buys and proceed with the trade only if liquidity is sufficient to avoid adverse price impacts.
-
-4. **Optional Stop Loss (SL) Setting for Each Wallet**:
-   - Add the ability to specify a Stop Loss percentage for each wallet, triggering an automatic sell if the SL threshold is reached.
-   - **Developer response**: "This is impossible because of RPC node server issues. Without our own local node server, we cannot implement subscription-based functions such as a Stop Loss."
+3. **More Customizable Trading Strategies**
+   - Adding Stop Loss (SL) functionality.
+   - Implementing **advanced trade execution options**.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License. See `LICENSE` for details.
+This project is licensed under the **MIT License**. See `LICENSE` for details.
