@@ -21,7 +21,7 @@ import { logBuyOrSellTrigeer, logError, logLine, logSkipped, logger, roundToDeci
 import { BN } from '@coral-xyz/anchor';
 import BigNumber from 'bignumber.js';
 import { executeTransaction, getDeserialize, getQuoteForSwap, getSerializedTransaction } from './jupiter';
-import { TokenListType, AnalyzeType } from './types';
+import { TokenListType, AnalyzeType, TokenInforType } from './types';
 
 if (process.argv.length !== 3) {
   console.error('Error launching app:');
@@ -279,13 +279,13 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
         if (!transaction) {
           throw new Error('Invalid transaction signature.');
         }
-        const swapSize = await getTradeSize(transaction, analyze.dex, SOL_ADDRESS, mintOut);
+        const swapSize = await getRaydiumTradeSize(transaction, SOL_ADDRESS, mintOut, WALLET.publicKey);
 
         // Add token to buy token list
         buyTokenList.push({
-          amount: swapSize.diffOther,
+          amount: swapSize.from.amount,
           dex: analyze.dex,
-          fee: swapSize.diffSol - TRADE_AMOUNT / LAMPORTS_PER_SOL,
+          fee: swapSize.from.amount - TRADE_AMOUNT / LAMPORTS_PER_SOL,
           mint: mintOut,
           sold: false,
           decimals: analyze.to.decimals,
@@ -298,11 +298,11 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
           TARGET_WALLET_ADDRESS.toString(),
           analyze.dex,
           mintOut.toString(),
-          swapSize.diffSol.toString(),
+          swapSize.from.amount.toString(),
           'Succeed copying buy.'
         );
 
-        logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, swapSize.diffOther, analyze.to.symbol); // Log the purchase success message
+        logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, swapSize.from.amount, analyze.to.symbol); // Log the purchase success message
 
         // If purchase failed
       } else {
@@ -367,84 +367,14 @@ async function calculateProfit(signature: string, token: TokenListType) {
       throw new Error(`No transaction with this signature: ${signature}`);
     }
 
-    const swapSize = await getTradeSize(transaction, token.dex, SOL_ADDRESS, token.mint);
+    const swapSize = await getRaydiumTradeSize(transaction, SOL_ADDRESS, token.mint, WALLET.publicKey);
 
     const usedSol = TRADE_AMOUNT / LAMPORTS_PER_SOL + token.fee;
-    const profit = ((swapSize.diffSol - usedSol) * 100) / usedSol;
+    const profit = ((swapSize.to.amount - usedSol) * 100) / usedSol;
 
-    return { diffSol: swapSize.diffSol, profit };
+    return { diffSol: swapSize.to.amount, profit };
   } catch (error: any) {
     throw new Error(error.message || 'Unexpected error while calculating profit.');
-  }
-}
-
-/**
- * Obtains trade size for transaction with specified transaction
- */
-async function getTradeSize(
-  transaction: ParsedTransactionWithMeta,
-  dex: string,
-  solAccount?: PublicKey,
-  otherAccount?: PublicKey
-) {
-  try {
-    if (dex === 'Raydium') {
-      const postTokenBalances = transaction.meta?.postTokenBalances?.filter(
-        (p) => p.owner === RAYDIUM_AUTHORITY_V4.toString()
-      );
-      const preTokenBalances = transaction.meta?.preTokenBalances?.filter(
-        (p) => p.owner === RAYDIUM_AUTHORITY_V4.toString()
-      );
-
-      const decimals = postTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.decimals || 0;
-
-      const diffSol = new BigNumber(
-        postTokenBalances?.find((p) => p.mint === solAccount?.toString())?.uiTokenAmount.uiAmount || 0
-      )
-        .minus(
-          new BigNumber(preTokenBalances?.find((p) => p.mint === solAccount?.toString())?.uiTokenAmount.uiAmount || 0)
-        )
-        .toNumber();
-
-      const diffOther = new BigNumber(
-        postTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0
-      )
-        .minus(
-          new BigNumber(preTokenBalances?.find((p) => p.mint === otherAccount?.toString())?.uiTokenAmount.uiAmount || 0)
-        )
-        .toNumber();
-
-      return {
-        diffSol: Math.abs(roundToDecimal(diffSol)),
-        diffOther: Math.abs(roundToDecimal(diffOther, decimals)),
-        isBuy: diffSol > 0 ? true : false,
-      };
-    } else {
-      const transfers = getJupiterTransfers(transaction);
-
-      const [tokenIn, tokenOut] = await Promise.all([
-        getTokenMintAddress(transfers[0].source, transfers[0].destination),
-        getTokenMintAddress(transfers[1].source, transfers[1].destination),
-      ]);
-
-      const diffSol =
-        tokenIn?.mint === SOL_ADDRESS.toString()
-          ? (transfers[0].amount as number) / LAMPORTS_PER_SOL
-          : (transfers[1].amount as number) / LAMPORTS_PER_SOL;
-
-      const diffOther =
-        tokenIn?.mint === SOL_ADDRESS.toString()
-          ? (transfers[1].amount as number) / 10 ** (tokenOut?.decimals || 0)
-          : (transfers[0].amount as number) / 10 ** (tokenIn?.decimals || 0);
-
-      return {
-        diffSol: Math.abs(roundToDecimal(diffSol)),
-        diffOther: Math.abs(roundToDecimal(diffOther)),
-        isBuy: diffSol > 0 ? true : false,
-      };
-    }
-  } catch (error: any) {
-    throw new Error(error.message || 'Unexpected error while calculating trade size.');
   }
 }
 
@@ -495,9 +425,6 @@ function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
  * Analyzes transaction
  */
 async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signature: string, dex: string) {
-  let solAccount: PublicKey | undefined;
-  let tokenAccount: PublicKey | undefined;
-  let poolAccount: PublicKey | undefined;
   try {
     const instructions = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
 
@@ -537,59 +464,148 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
       // SmartFox Get all instructions from transaction
       const instrsWithAccs = instructions.filter((ix) => ix.accounts && ix.accounts.length > 0);
 
+      let poolAccounts: PublicKey[] = [];
+
       // SmartFox Loop until will find the account that its owner is RAYDIUM_LIQUIDITYPOOL_V4
-      outerLoop: for (const ix of instrsWithAccs) {
-        const accounts = ix.accounts;
+      for (const ix of instrsWithAccs) {
+        const accounts = ix.accounts.filter((acc) => acc.toString() !== 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
         for (const acc of accounts) {
           const poolInfo = await connection1.getAccountInfo(acc, { commitment: 'confirmed' });
 
-          if (poolInfo?.owner.equals(RAYDIUM_LIQUIDITYPOOL_V4)) {
-            poolAccount = acc;
-            break outerLoop; // Exit the loop once the account is found
+          if (
+            poolInfo?.owner.equals(RAYDIUM_LIQUIDITYPOOL_V4) &&
+            poolInfo.data.length === 752 &&
+            !poolAccounts.some((p) => p.equals(acc))
+          ) {
+            poolAccounts.push(acc);
           }
         }
       }
 
-      if (!poolAccount) {
+      if (poolAccounts.length === 0) {
         throw new Error('No Raydium or Jupiter swap transaction.');
       }
 
-      // OB Get information of pool account
-      const poolInfo = await connection1.getAccountInfo(poolAccount, { commitment: 'confirmed' });
-      if (!poolInfo) {
-        throw new Error('Invalid Raydium pool account.');
+      let fromInfor: TokenInforType;
+      let toInfor: TokenInforType;
+      let type: string = '';
+      let from: { mint: PublicKey; amount: number };
+      let to: { mint: PublicKey; amount: number };
+
+      if (poolAccounts.length === 1) {
+        const { baseMint, quoteMint } = await getInforFromRaydiumPool(poolAccounts[0]);
+        const trade = await getRaydiumTradeSize(transaction, baseMint, quoteMint, RAYDIUM_AUTHORITY_V4);
+        from = trade.to;
+        to = trade.from;
+        fromInfor = await getTokenInfo(connection1, from.mint);
+        toInfor = await getTokenInfo(connection1, to.mint);
+        type = trade.type === 'Sell' ? 'Buy' : trade.type === 'Buy' ? 'Sell' : 'Swap';
+      } else {
+        const { baseMint: baseMint1, quoteMint: quoteMint1 } = await getInforFromRaydiumPool(poolAccounts[0]);
+        const { baseMint: baseMint2, quoteMint: quoteMint2 } = await getInforFromRaydiumPool(
+          poolAccounts[poolAccounts.length - 1]
+        );
+
+        ({ from } = await getRaydiumTradeSize(transaction, baseMint1, quoteMint1, TARGET_WALLET_ADDRESS));
+        ({ to } = await getRaydiumTradeSize(transaction, baseMint2, quoteMint2, TARGET_WALLET_ADDRESS));
+
+        fromInfor = await getTokenInfo(connection1, from.mint);
+        toInfor = await getTokenInfo(connection1, to.mint);
+        type = 'Swap';
       }
-
-      // OB Decode the data of information of pool account
-      const poolData = liquidityStateV4Layout.decode(poolInfo?.data);
-      solAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.baseMint : poolData.quoteMint;
-      tokenAccount = poolData.baseMint.equals(SOL_ADDRESS) ? poolData.quoteMint : poolData.baseMint;
-
-      const trade = await getTradeSize(transaction, 'Raydium', solAccount, tokenAccount);
-      const tokenInfor = await getTokenInfo(connection1, tokenAccount);
 
       return {
         signature,
         target_wallet: TARGET_WALLET_ADDRESS.toString(),
-        type: trade.isBuy ? 'Buy' : 'Sell',
+        type,
         dex,
-        pool_address: poolAccount.toString(),
+        pool_address: poolAccounts[0].toString(),
         from: {
-          token_address: solAccount.toString(),
-          amount: trade.diffSol,
-          symbol: trade.isBuy ? 'SOL' : tokenInfor?.symbol,
-          decimals: trade.isBuy ? LAMPORTS_PER_SOL : tokenInfor?.decimals,
+          token_address: fromInfor.address,
+          amount: from.amount,
+          symbol: fromInfor.symbol,
+          decimals: fromInfor.decimals,
         },
         to: {
-          token_address: tokenAccount.toString(),
-          amount: trade.diffOther,
-          symbol: !trade.isBuy ? 'SOL' : tokenInfor?.symbol,
-          decimals: !trade.isBuy ? LAMPORTS_PER_SOL : tokenInfor?.decimals,
+          token_address: toInfor.address,
+          amount: to.amount,
+          symbol: toInfor.symbol,
+          decimals: toInfor.decimals,
         },
       } as AnalyzeType;
     }
   } catch (error: any) {
+    console.error(error);
     throw new Error(error.message || 'Unexpected error while analyzing transaction.');
+  }
+}
+
+async function getRaydiumTradeSize(
+  transaction: ParsedTransactionWithMeta,
+  baseMint: PublicKey,
+  quoteMint: PublicKey,
+  owner: PublicKey
+) {
+  try {
+    const postTokenBalances = transaction.meta?.postTokenBalances?.filter((p) => p.owner === owner.toString());
+    const preTokenBalances = transaction.meta?.preTokenBalances?.filter((p) => p.owner === owner.toString());
+
+    const basePostTokenBal =
+      postTokenBalances?.find((p) => p.mint === baseMint?.toString())?.uiTokenAmount.uiAmount || 0;
+    const basePreTokenBal = preTokenBalances?.find((p) => p.mint === baseMint?.toString())?.uiTokenAmount.uiAmount || 0;
+
+    const quotePostTokenBal =
+      postTokenBalances?.find((p) => p.mint === quoteMint?.toString())?.uiTokenAmount.uiAmount || 0;
+    const quotePreTokenBal =
+      preTokenBalances?.find((p) => p.mint === quoteMint?.toString())?.uiTokenAmount.uiAmount || 0;
+
+    const baseDiff = new BigNumber(basePostTokenBal).minus(new BigNumber(basePreTokenBal)).toNumber();
+    const quoteDiff = new BigNumber(quotePostTokenBal).minus(new BigNumber(quotePreTokenBal)).toNumber();
+
+    const [less, lessA, bigger, biggerA] =
+      baseDiff < 0
+        ? [baseMint, baseDiff, quoteMint, quoteDiff]
+        : quoteDiff < 0
+        ? [quoteMint, quoteDiff, baseMint, baseDiff]
+        : [baseMint, baseDiff, quoteMint, quoteDiff];
+
+    let type = '';
+    if (less.equals(SOL_ADDRESS)) {
+      type = 'Buy';
+    } else if (bigger.equals(SOL_ADDRESS)) {
+      type = 'Sell';
+    } else {
+      type = 'Swap';
+    }
+
+    return {
+      from: {
+        mint: less,
+        amount: Math.abs(lessA),
+      },
+      to: {
+        mint: bigger,
+        amount: biggerA,
+      },
+      type,
+    };
+  } catch (error: any) {
+    throw new Error(error.message || '');
+  }
+}
+
+async function getInforFromRaydiumPool(pool: PublicKey) {
+  try {
+    const poolInfo = await connection1.getAccountInfo(pool, { commitment: 'confirmed' });
+    if (!poolInfo) {
+      throw new Error('Invalid Raydium pool account.');
+    }
+
+    const { baseMint, quoteMint } = liquidityStateV4Layout.decode(poolInfo?.data);
+
+    return { baseMint: baseMint, quoteMint: quoteMint };
+  } catch (error: any) {
+    throw new Error(error.message || 'Error while decoding information of pool.');
   }
 }
 
@@ -638,7 +654,7 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: numb
       amountIn: new BN(inAmount),
       mintIn: mintIn.address,
       mintOut: mintOut.address,
-      slippage: 0.01,
+      slippage: 0.1,
     });
 
     const { execute } = await raydium.liquidity.swap({
@@ -737,6 +753,7 @@ async function monitorToSell() {
             ));
           }
 
+          // Successfully sold the token
           if (success && signature) {
             const { diffSol, profit } = await calculateProfit(signature, token);
             logBuyOrSellTrigeer(false, diffSol, token.amount, token.symbol, profit.toString()); // Log sale success message
@@ -831,7 +848,7 @@ function logToFile(action: string, wallet: string, dex: string, token: string, a
 }
 
 // OB get token info
-async function getTokenInfo(connection: Connection, mint: PublicKey) {
+async function getTokenInfo(connection: Connection, mint: PublicKey): Promise<TokenInforType> {
   const metaplex = Metaplex.make(connection);
 
   try {
@@ -856,4 +873,19 @@ monitorNewToken();
 
 // Monitor whether it's profitable to sell the token.
 // If so perform tradingm otherwise skip.
-monitorToSell();
+// monitorToSell();
+
+// async function test(signature: string) {
+//   try {
+//     const transaction = await connection1.getParsedTransaction(signature, {
+//       commitment: 'confirmed',
+//       maxSupportedTransactionVersion: 0,
+//     });
+//     if (!transaction) return;
+//     await processTransaction(transaction, signature, 'Raydium');
+//   } catch (error) {
+//     console.error(error);
+//   }
+// }
+// test('8RqB5wQAxZUJB3PwUtAQ1ME8VuKBwgXpJ983iAN4bix8eYuRvgGRPYAb6RUmYwHtsQpVVQ5diLnGUCSk4cU1SWd');
+// test('4Mq7QWidXbFu5fsR1ZwJzsN1BFLVoXAMkEtWNi8Cr7oyrsn7d3kpaaWSgRuRQAwcG6PzvdsEaJrAdLQyg1xKwAi8');

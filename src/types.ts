@@ -30,3 +30,10 @@ export type AnalyzeType = {
     decimals: number;
   };
 };
+
+export type TokenInforType = {
+  name: string;
+  symbol: string;
+  address: string;
+  decimals: number;
+};
