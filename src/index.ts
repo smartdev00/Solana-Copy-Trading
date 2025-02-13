@@ -17,7 +17,7 @@ import {
 } from '@solana/web3.js';
 import { liquidityStateV4Layout, Raydium, ApiV3PoolInfoStandardItem } from '@raydium-io/raydium-sdk-v2';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { logBuyOrSellTrigeer, logError, logLine, logSkipped, logger, roundToDecimal } from './utils';
+import { logBuyOrSellTrigeer, logCircular, logError, logLine, logSkipped, logger, roundToDecimal } from './utils';
 import { BN } from '@coral-xyz/anchor';
 import BigNumber from 'bignumber.js';
 import { executeTransaction, getDeserialize, getQuoteForSwap, getSerializedTransaction } from './jupiter';
@@ -57,7 +57,7 @@ const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY 
 const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
 const COMPUTE_PRICE = 100000;
 const LIMIT_ORDER = 1.25; // for test
-const SLIPPAGE = 50;
+const SLIPPAGE = 500;
 const ERROR_SOUND_SKIP_TIME = 10000;
 
 const soundFilePaths = {
@@ -254,6 +254,11 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
       // sound.play(soundFilePaths.buyTrade);
       return;
     }
+
+    if (analyze.from.token_address === analyze.to.token_address) {
+      logCircular();
+      return;
+    }
     logLine();
 
     let swapResult: { success: boolean; signature: string | null } = {
@@ -275,7 +280,10 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 
       // If purchase succeeds
       if (swapResult.success && swapResult.signature) {
-        const transaction = await connection1.getParsedTransaction(swapResult.signature, 'confirmed');
+        const transaction = await connection1.getParsedTransaction(swapResult.signature, {
+          commitment: 'confirmed',
+          maxSupportedTransactionVersion: 0,
+        });
         if (!transaction) {
           throw new Error('Invalid transaction signature.');
         }
@@ -362,7 +370,10 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 
 async function calculateProfit(signature: string, token: TokenListType) {
   try {
-    const transaction = await connection1.getParsedTransaction(signature, 'confirmed');
+    const transaction = await connection1.getParsedTransaction(signature, {
+      commitment: 'confirmed',
+      maxSupportedTransactionVersion: 0,
+    });
     if (!transaction) {
       throw new Error(`No transaction with this signature: ${signature}`);
     }
@@ -382,40 +393,59 @@ async function calculateProfit(signature: string, token: TokenListType) {
 function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
   try {
     const instructions = transaction.transaction.message.instructions as PartiallyDecodedInstruction[];
-    const swapIxIdx = instructions.findIndex((ix) => {
+
+    const startIxIdx = instructions.findIndex((ix) => {
       return ix.programId.equals(JUPITER_AGGREGATOR_V6);
     });
 
-    if (swapIxIdx === -1) {
+    const lastIxIdx =
+      instructions.length -
+      instructions.reverse().findIndex((ix) => {
+        return ix.programId.equals(JUPITER_AGGREGATOR_V6);
+      }) -
+      1;
+
+    if (lastIxIdx === -1) {
       throw new Error('Non Jupiter Swap');
     }
 
-    const transfers: any[] = [];
+    console.log('lastIxIdx', lastIxIdx, startIxIdx);
+
+    const transfers: { amount: any; source: any; destination: any; authority: any }[] = [];
     transaction.meta?.innerInstructions?.forEach((instruction) => {
-      if (instruction.index <= swapIxIdx) {
+      if (instruction.index <= lastIxIdx && instruction.index >= startIxIdx ) {
         (instruction.instructions as ParsedInstruction[]).forEach((ix) => {
           if (ix.parsed?.type === 'transfer' && ix.parsed.info.amount) {
             transfers.push({
               amount: ix.parsed.info.amount,
               source: ix.parsed.info.source,
               destination: ix.parsed.info.destination,
+              authority: ix.parsed.info.authority,
             });
           } else if (ix.parsed?.type === 'transferChecked' && ix.parsed.info.tokenAmount.amount) {
             transfers.push({
               amount: ix.parsed.info.tokenAmount.amount,
               source: ix.parsed.info.source,
               destination: ix.parsed.info.destination,
+              authority: ix.parsed.info.authority,
             });
           }
         });
       }
     });
 
+    console.log('transfers', transfers);
+
     if (transfers.length < 2) {
       throw new Error('Invalid Jupiter Swap');
     }
 
-    return [transfers[0], transfers[transfers.length - 1]];
+    return [
+      transfers[0],
+      transfers[transfers.length - 1].authority === TARGET_WALLET_ADDRESS.toString()
+        ? transfers[transfers.length - 2]
+        : transfers[transfers.length - 1],
+    ];
   } catch (error: any) {
     throw new Error(error.message || 'Unexpected error while extracting transfers from jupiter dex.');
   }
@@ -873,7 +903,7 @@ monitorNewToken();
 
 // Monitor whether it's profitable to sell the token.
 // If so perform tradingm otherwise skip.
-// monitorToSell();
+monitorToSell();
 
 // async function test(signature: string) {
 //   try {
@@ -882,10 +912,11 @@ monitorNewToken();
 //       maxSupportedTransactionVersion: 0,
 //     });
 //     if (!transaction) return;
-//     await processTransaction(transaction, signature, 'Raydium');
+//     await processTransaction(transaction, signature, 'Jupiter');
 //   } catch (error) {
 //     console.error(error);
 //   }
 // }
-// test('8RqB5wQAxZUJB3PwUtAQ1ME8VuKBwgXpJ983iAN4bix8eYuRvgGRPYAb6RUmYwHtsQpVVQ5diLnGUCSk4cU1SWd');
-// test('4Mq7QWidXbFu5fsR1ZwJzsN1BFLVoXAMkEtWNi8Cr7oyrsn7d3kpaaWSgRuRQAwcG6PzvdsEaJrAdLQyg1xKwAi8');
+// test('5sXcffDWpBwZ1EH5fex58YBuTwENinjEizNtjg6axnRjY5gBVaz9xcCWxTrN26xt3UpLvGk7sdvHJDhqezYVxp5B');
+// test('4hawmPrGpPov8vUMNTGsouXhDqvgBd9wt9QsAZuDvYgJqqbY4g35X7ZFGixEKGotRWEgwjwQcK3z21Mst3NwDS5u');
+//https://solscan.io/tx/f93BiTDDPybnPjrnqtEGaZZ8PGropvGZtReGqKtv92cWpZCefyshv9Ngz1QmqoXAtcZtNRNbJgsTrtoEyzYp8ak

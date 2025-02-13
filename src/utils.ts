@@ -18,6 +18,10 @@ export function logError(str?: string) {
   console.log('❌', `${chalk.red('ERROR:')}: ${str || 'Failed to process transaction due to low balance.'}`);
 }
 
+export function logCircular(str?: string) {
+  console.log('🔄', `${chalk.red('CIRCULAR ARBITRAGE:')}: ${str || 'Input and Output mint are same.'}`);
+}
+
 export function logBuyOrSellTrigeer(
   isBuy: boolean,
   solAmount: number,
