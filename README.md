@@ -260,13 +260,13 @@ You should see output similar to:
 | **Target Wallet Swap Detection** | Helius WebSockets | `wss://rpc.helius.dev/v0/stream` |
 | **Fetching Full Transaction Details** | Helius RPC API | `https://mainnet.helius-rpc.com` |
 | **Fetching Real-Time Token Prices** | Jupiter Quote API | `https://quote-api.jup.ag/v6` |
-| **Executing Buy/Sell Trades** | Solana JSON-RPC API (via Helius) | `https://mainnet.helius-rpc.com` |
+| **Executing Buy/Sell Trades** | Solana JSON-RPC API | Direct interaction with Raydium/Jupiter smart contracts |
 | **Trading on Raydium/Jupiter** | Raydium/Jupiter Smart Contracts | Directly via JSON-RPC |
 
 ---
 
 ### **Final Notes**
-- **The bot does NOT use Helius to execute trades.** Instead, it interacts **directly with Raydium and Jupiter smart contracts via Solana JSON-RPC**.
+- **The bot does NOT use Helius to execute trades.** Instead, it interacts **directly with Raydium and Jupiter smart contracts via Solana JSON-RPC.** Helius is only used for swap detection and transaction data retrieval.
 - **Helius WebSockets + RPC API work together**: WebSockets provide **instant notifications**, but **extra details** must be fetched via RPC.
 - **Jupiter Quote API is used for price monitoring of both Raydium and Jupiter trades**, but **trades are executed directly on Solana**.
 
