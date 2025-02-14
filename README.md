@@ -166,6 +166,112 @@ You should see output similar to:
 
 ---
 
+## **External Services, APIs, and Mechanisms Used by the Bot**
+
+### **1. Swap Detection - Monitoring Target Wallet in Real-Time**
+- **How it Works:** 
+  - The bot **monitors target wallet activity** for buy/sell swaps.
+  - When a transaction occurs, **it does not contain all necessary swap details**.
+  - The bot **fetches additional data** to fully analyze the transaction.
+  
+- **Services & APIs Used:**
+  - **Helius WebSockets API**:
+    - Listens for real-time transaction events affecting the target wallet.
+	- Notifies the bot of all transactions involving the target wallet. The bot filters out non-swap transactions during analysis.
+  - **Helius RPC API**:
+    - Fetches **additional transaction details** (e.g., token data, sender/receiver addresses, swap amounts).
+    - Queries Solana blockchain for structured transaction data.
+
+- **Real-Time Monitoring Mechanism:**
+  - The bot **subscribes to Helius WebSockets** to receive immediate notifications for wallet activity.
+  - When an event occurs, it **requests enriched transaction details** via Helius RPC API.
+
+---
+
+### **2. Copy Trading - Buying Tokens**
+- **How it Works:** 
+  - Once a target wallet **executes a buy trade**, the bot checks if the trade **meets the minimum trade size threshold**.
+  - If the conditions are met, the bot **executes a matching buy trade** as quickly as possible.
+
+- **Services & APIs Used:**
+  - **Helius WebSockets API**:
+    - Detects when the target wallet executes a trade.
+  - **Helius RPC API**:
+    - Retrieves token addresses, amounts, and swap direction.
+  - **Jupiter Quote API (`https://quote-api.jup.ag/v6`)**:
+    - Fetches real-time price quotes for tokens.
+    - Used to calculate expected trade amounts and slippage.
+  - **Solana JSON-RPC (via Helius API)**:
+    - Executes the buy trade **directly** on Raydium or Jupiter.
+
+- **Trade Execution Mechanism:**
+  - The bot **queries Jupiter's Quote API** to get the best swap route and expected slippage.
+  - Uses **Solana JSON-RPC API** (via Helius) to interact with Raydium or Jupiter smart contracts for **trade execution**.
+
+---
+
+### **3. Copy Trading - Selling Tokens**
+- **How it Works:** 
+  - The bot **sells 100% of a token** when either of these conditions are met:
+    1. **The target wallet sells the token**.
+    2. **The token's live price reaches the Take Profit (TP) threshold**.
+
+- **Services & APIs Used:**
+  - **Helius WebSockets API**:
+    - Detects when the target wallet sells a token.
+  - **Helius RPC API**:
+    - Fetches updated transaction data to verify the swap.
+  - **Jupiter Quote API (`https://quote-api.jup.ag/v6`)**:
+    - Monitors token prices in real-time.
+    - Determines when TP price is hit.
+  - **Solana JSON-RPC (via Helius API)**:
+    - Executes sell transactions on Raydium or Jupiter.
+
+- **Trade Execution Mechanism:**
+  - When a sell trigger occurs (either target wallet sell or TP reached), the bot:
+    1. Queries **Jupiter Quote API** for the latest price.
+    2. Uses **Solana JSON-RPC API** to execute a market sell order.
+    3. **Stops monitoring the token once it is fully sold**.
+
+---
+
+### **4. Real-Time Token Price Monitoring**
+- **How it Works:** 
+  - Once the bot has copy-traded a buy, it **continuously monitors the live price** of that token.
+  - If the price exceeds the **Take Profit (TP) threshold**, the bot **sells 100% of the holding**.
+
+- **Services & APIs Used:**
+  - **Jupiter Quote API (`https://quote-api.jup.ag/v6`)**:
+    - Fetches real-time token price data.
+    - Helps determine when the TP threshold is reached.
+  - **Helius RPC API**:
+    - **Verifies token balances after trades** to ensure accurate tracking of held assets.
+
+- **Price Monitoring Mechanism:**
+  - The bot **polls Jupiter Quote API** for updated token prices.
+  - **This applies to both Raydium and Jupiter tokens copy-traded by the bot**.
+  - If the price **hits the TP threshold**, it **executes a sell order** via Solana JSON-RPC API.
+
+---
+
+### **Summary of APIs & External Services Used**
+| Function | Service Used | API/Endpoint |
+|----------|-------------|--------------|
+| **Target Wallet Swap Detection** | Helius WebSockets | `wss://rpc.helius.dev/v0/stream` |
+| **Fetching Full Transaction Details** | Helius RPC API | `https://mainnet.helius-rpc.com` |
+| **Fetching Real-Time Token Prices** | Jupiter Quote API | `https://quote-api.jup.ag/v6` |
+| **Executing Buy/Sell Trades** | Solana JSON-RPC API | Direct interaction with Raydium/Jupiter smart contracts |
+| **Trading on Raydium/Jupiter** | Raydium/Jupiter Smart Contracts | Directly via JSON-RPC |
+
+---
+
+### **Final Notes**
+- **The bot does NOT use Helius to execute trades.** Instead, it interacts **directly with Raydium and Jupiter smart contracts via Solana JSON-RPC.** Helius is only used for swap detection and transaction data retrieval.
+- **Helius WebSockets + RPC API work together**: WebSockets provide **instant notifications**, but **extra details** must be fetched via RPC.
+- **Jupiter Quote API is used for price monitoring of both Raydium and Jupiter trades**, but **trades are executed directly on Solana**.
+
+---
+
 ## License
 
 This project is licensed under the **MIT License**. See `LICENSE` for details.
