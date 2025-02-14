@@ -285,15 +285,24 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
           maxSupportedTransactionVersion: 0,
         });
         if (!transaction) {
-          throw new Error('Invalid transaction signature.');
+          throw new Error(`Invalid transaction signature ${swapResult.signature}.`);
         }
-        const swapSize = await getRaydiumTradeSize(transaction, SOL_ADDRESS, mintOut, WALLET.publicKey);
+
+        // const swapSize = await getRaydiumTradeSize(transaction, SOL_ADDRESS, mintOut, WALLET.publicKey);
+        let tokenAmount = 0;
+        if (analyze.dex === 'Raydium') {
+          const swapSize = await getRaydiumTradeSize(transaction, SOL_ADDRESS, mintOut, WALLET.publicKey);
+          tokenAmount = swapSize.to.amount;
+        } else {
+          const transfers = await getJupiterTransfers(transaction);
+          tokenAmount = transfers[1].amount / 10 ** analyze.to.decimals;
+        }
 
         // Add token to buy token list
         buyTokenList.push({
-          amount: swapSize.from.amount,
+          amount: tokenAmount,
           dex: analyze.dex,
-          fee: swapSize.from.amount - TRADE_AMOUNT / LAMPORTS_PER_SOL,
+          fee: 0,
           mint: mintOut,
           sold: false,
           decimals: analyze.to.decimals,
@@ -306,11 +315,11 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
           TARGET_WALLET_ADDRESS.toString(),
           analyze.dex,
           mintOut.toString(),
-          swapSize.from.amount.toString(),
+          tokenAmount.toString(),
           'Succeed copying buy.'
         );
 
-        logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, swapSize.from.amount, analyze.to.symbol); // Log the purchase success message
+        logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, tokenAmount, analyze.to.symbol); // Log the purchase success message
 
         // If purchase failed
       } else {
@@ -345,8 +354,8 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 
       // If sale succeeds
       if (swapResult.success && swapResult.signature) {
-        const { diffSol, profit } = await calculateProfit(swapResult.signature, token);
-        logBuyOrSellTrigeer(false, diffSol, token.amount, analyze.to.symbol, profit.toString()); // Log sale success message
+        const { diffSol, profit } = await calculateProfit(swapResult.signature, token, analyze.dex);
+        logBuyOrSellTrigeer(false, diffSol, 100, analyze.to.symbol, profit.toString()); // Log sale success message
 
         buyTokenList.splice(index, 1); // Remove the token from buy list
         logToFile(
@@ -368,7 +377,7 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
   }
 }
 
-async function calculateProfit(signature: string, token: TokenListType) {
+async function calculateProfit(signature: string, token: TokenListType, dex: string) {
   try {
     const transaction = await connection1.getParsedTransaction(signature, {
       commitment: 'confirmed',
@@ -378,12 +387,19 @@ async function calculateProfit(signature: string, token: TokenListType) {
       throw new Error(`No transaction with this signature: ${signature}`);
     }
 
-    const swapSize = await getRaydiumTradeSize(transaction, SOL_ADDRESS, token.mint, WALLET.publicKey);
+    let amount = 0;
+    if (dex === 'Jupiter') {
+      const transfers = getJupiterTransfers(transaction);
+      amount = transfers[1].amount / 10 ** token.decimals;
+    } else {
+      const swapSize = await getRaydiumTradeSize(transaction, SOL_ADDRESS, token.mint, RAYDIUM_AUTHORITY_V4);
+      amount = swapSize.to.amount;
+    }
 
     const usedSol = TRADE_AMOUNT / LAMPORTS_PER_SOL + token.fee;
-    const profit = ((swapSize.to.amount - usedSol) * 100) / usedSol;
+    const profit = ((amount - usedSol) * 100) / usedSol;
 
-    return { diffSol: swapSize.to.amount, profit };
+    return { diffSol: amount, profit };
   } catch (error: any) {
     throw new Error(error.message || 'Unexpected error while calculating profit.');
   }
@@ -413,7 +429,7 @@ function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
 
     const transfers: { amount: any; source: any; destination: any; authority: any }[] = [];
     transaction.meta?.innerInstructions?.forEach((instruction) => {
-      if (instruction.index <= lastIxIdx && instruction.index >= startIxIdx ) {
+      if (instruction.index <= lastIxIdx && instruction.index >= startIxIdx) {
         (instruction.instructions as ParsedInstruction[]).forEach((ix) => {
           if (ix.parsed?.type === 'transfer' && ix.parsed.info.amount) {
             transfers.push({
@@ -669,6 +685,8 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: numb
     const poolInfo = (await raydium.api.fetchPoolById({ ids: pool.toString() }))[0] as ApiV3PoolInfoStandardItem;
     const rpcData = await raydium.liquidity.getRpcPoolInfo(pool.toString());
 
+    console.log('poolInfo', poolInfo, pool.toString());
+
     const [baseReserve, quoteReserve, status] = [rpcData.baseReserve, rpcData.quoteReserve, rpcData.status.toNumber()];
     const baseIn = mintInPub.toString() === poolInfo.mintA.address;
     const [mintIn, mintOut] = baseIn ? [poolInfo.mintA, poolInfo.mintB] : [poolInfo.mintB, poolInfo.mintA];
@@ -746,11 +764,16 @@ async function monitorToSell() {
 
           // If token is bought on Jupiter dex
           if (token.dex === 'Jupiter') {
-            const quote = await getQuoteForSwap(SOL_ADDRESS.toString(), token.mint.toString(), TRADE_AMOUNT, SLIPPAGE);
+            const quote = await getQuoteForSwap(
+              token.mint.toString(),
+              SOL_ADDRESS.toString(),
+              token.amount * 10 ** token.decimals,
+              SLIPPAGE
+            );
             if (quote.error) {
               return;
             }
-            const targetAmount = token.amount * LIMIT_ORDER * 10 ** token.decimals; // target profit
+            const targetAmount = Math.floor(TRADE_AMOUNT * LIMIT_ORDER); // target profit
 
             // If sell is non profitable
             if (Number(quote.outAmount) < targetAmount) {
@@ -785,8 +808,8 @@ async function monitorToSell() {
 
           // Successfully sold the token
           if (success && signature) {
-            const { diffSol, profit } = await calculateProfit(signature, token);
-            logBuyOrSellTrigeer(false, diffSol, token.amount, token.symbol, profit.toString()); // Log sale success message
+            const { diffSol, profit } = await calculateProfit(signature, token, 'Raydium');
+            logBuyOrSellTrigeer(false, diffSol, 100, token.symbol, profit.toString()); // Log sale success message
 
             indexesToDel.unshift(index); // Add index of item to remove
             logToFile(
@@ -917,6 +940,6 @@ monitorToSell();
 //     console.error(error);
 //   }
 // }
-// test('5sXcffDWpBwZ1EH5fex58YBuTwENinjEizNtjg6axnRjY5gBVaz9xcCWxTrN26xt3UpLvGk7sdvHJDhqezYVxp5B');
+// test('BsNQuRQmtsQzJGvWccDgao1JznkgC6xxJqxbvQp7u2RnXXyZqwGbSNxHV2f2qmy6Jo4RJ5hYMuxYgPwnK2u8awj');
 // test('4hawmPrGpPov8vUMNTGsouXhDqvgBd9wt9QsAZuDvYgJqqbY4g35X7ZFGixEKGotRWEgwjwQcK3z21Mst3NwDS5u');
 //https://solscan.io/tx/f93BiTDDPybnPjrnqtEGaZZ8PGropvGZtReGqKtv92cWpZCefyshv9Ngz1QmqoXAtcZtNRNbJgsTrtoEyzYp8ak
