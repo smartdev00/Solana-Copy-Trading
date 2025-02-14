@@ -177,7 +177,7 @@ You should see output similar to:
 - **Services & APIs Used:**
   - **Helius WebSockets API**:
     - Listens for real-time transaction events affecting the target wallet.
-    - Notifies the bot when a swap happens.
+	- Notifies the bot of all transactions involving the target wallet. The bot filters out non-swap transactions during analysis.
   - **Helius RPC API**:
     - Fetches **additional transaction details** (e.g., token data, sender/receiver addresses, swap amounts).
     - Queries Solana blockchain for structured transaction data.
