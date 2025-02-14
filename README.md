@@ -166,7 +166,7 @@ You should see output similar to:
 
 ---
 
-## External Services, APIs and Mechanisms used by the Bot
+## **External Services, APIs, and Mechanisms Used by the Bot**
 
 ### **1. Swap Detection - Monitoring Target Wallet in Real-Time**
 - **How it Works:** 
@@ -231,7 +231,7 @@ You should see output similar to:
   - When a sell trigger occurs (either target wallet sell or TP reached), the bot:
     1. Queries **Jupiter Quote API** for the latest price.
     2. Uses **Solana JSON-RPC API** to execute a market sell order.
-    3. Stops monitoring the token once it is fully sold.
+    3. **Stops monitoring the token once it is fully sold**.
 
 ---
 
@@ -245,10 +245,11 @@ You should see output similar to:
     - Fetches real-time token price data.
     - Helps determine when the TP threshold is reached.
   - **Helius RPC API**:
-    - Verifies token balances after trades.
+    - **Verifies token balances after trades** to ensure accurate tracking of held assets.
 
 - **Price Monitoring Mechanism:**
   - The bot **polls Jupiter Quote API** for updated token prices.
+  - **This applies to both Raydium and Jupiter tokens copy-traded by the bot**.
   - If the price **hits the TP threshold**, it **executes a sell order** via Solana JSON-RPC API.
 
 ---
@@ -267,7 +268,7 @@ You should see output similar to:
 ### **Final Notes**
 - **The bot does NOT use Helius to execute trades.** Instead, it interacts **directly with Raydium and Jupiter smart contracts via Solana JSON-RPC**.
 - **Helius WebSockets + RPC API work together**: WebSockets provide **instant notifications**, but **extra details** must be fetched via RPC.
-- **Jupiter Quote API is used for price monitoring**, but **trades are executed directly on Solana**.
+- **Jupiter Quote API is used for price monitoring of both Raydium and Jupiter trades**, but **trades are executed directly on Solana**.
 
 ---
 
