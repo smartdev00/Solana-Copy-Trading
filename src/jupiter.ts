@@ -7,7 +7,7 @@ export async function getQuoteForSwap(inputAddr: string, outputAddr: string, amo
     );
     const quote: any = await response.json();
     if (quote.error) {
-      throw new Error(quote.message);
+      throw new Error(quote.error);
     }
     return quote;
   } catch (error: any) {
