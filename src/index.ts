@@ -82,10 +82,10 @@ let appStartedAtSeconds = Math.floor(Date.now() / 1000);
 
 /*
  * Trade log filename (ensure it is ignored by Git)
- * TODO: Specify through configuration file
  */
 
-const LOG_FILE = 'trade_log.csv';
+const walletSuffix = TARGET_WALLET_ADDRESS.toString().slice(-5); // Get last 5 characters of the wallet address 
+const LOG_FILE = `trade_log_${walletSuffix}.csv`;
 
 // Create log file if not exists and add headers
 if (!fs.existsSync(LOG_FILE)) {
