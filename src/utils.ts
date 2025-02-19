@@ -2,11 +2,7 @@ import chalk from 'chalk';
 import { AnalyzeType } from './types';
 
 export const logLine = () => {
-  console.log(
-    chalk.gray(
-      '---------------------------------------------------------------------------------------------------------------------'
-    )
-  );
+  console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
 };
 
 export const logSkipped = (solDiff: number) => {
@@ -16,10 +12,12 @@ export const logSkipped = (solDiff: number) => {
 
 export function logError(str?: string) {
   console.log('❌', `${chalk.red('ERROR:')}: ${str || 'Failed to process transaction due to low balance.'}`);
+  logLine();
 }
 
 export function logCircular(str?: string) {
   console.log('🔄', `${chalk.red('CIRCULAR ARBITRAGE:')}: ${str || 'Input and Output mint are same.'}`);
+  logLine();
 }
 
 export function logBuyOrSellTrigeer(
@@ -27,22 +25,25 @@ export function logBuyOrSellTrigeer(
   solAmount: number,
   mintAmount: number,
   symbol: string,
+  signature: string,
   profit?: string
 ) {
   if (isBuy) {
     console.log(
       '🛒 ✅',
       `${chalk.green('BUY EXECUTED')}: Purchased ${mintAmount} ${chalk.yellow(symbol)} for ${solAmount} ${chalk.yellow(
-        'SOL'
+        'SOL\n' + `📝 TX: ${chalk.cyan(`https://solscan.io/tx/${signature}`)}`
       )}`
     );
   } else {
     console.log(
-      `🔴 ${chalk.red('SELL TRIGGERED')}: Sold ${mintAmount}% of ${chalk.yellow(symbol)} for ${solAmount} ${chalk.yellow(
-        'SOL'
-      )} (${chalk.green('Profit')}: ${profit}%)`
+      `🔴 ${chalk.red('SELL TRIGGERED')}: Sold ${mintAmount}% of ${chalk.yellow(
+        symbol
+      )} for ${solAmount} ${chalk.yellow('SOL')} (${chalk.green('Profit')}: ${profit}%)\n` +
+        `📝 TX: ${chalk.cyan(`https://solscan.io/tx/${signature}`)}`
     );
   }
+  logLine();
 }
 
 export const logger = (data: AnalyzeType) => {
@@ -71,6 +72,7 @@ export const logger = (data: AnalyzeType) => {
   console.log(`📍 DEX: ${chalk.blue(data.dex)}`);
   console.log(`📝 TX: ${chalk.cyan(`https://solscan.io/tx/${data.signature}`)}`);
   console.log(`🤵 Wallet: ${chalk.magenta(`https://solscan.io/account/${data.target_wallet}`)}`);
+  logLine();
 };
 
 export const roundToDecimal = (value: number, decimals = 9): number => {
