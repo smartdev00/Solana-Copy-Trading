@@ -387,10 +387,10 @@ async function calculateProfit(signature: string, token: TokenListType, dex: str
     let amount = 0;
     if (dex === 'Jupiter') {
       const transfers = getJupiterTransfers(transaction);
-      amount = transfers[1].amount / 10 ** token.decimals;
+      amount = transfers[1].amount / LAMPORTS_PER_SOL;
     } else {
-      const swapSize = await getRaydiumTradeSize(transaction, SOL_ADDRESS, token.mint, RAYDIUM_AUTHORITY_V4);
-      amount = swapSize.to.amount;
+      const swapSize = await getRaydiumTradeSize(transaction, token.mint, SOL_ADDRESS, RAYDIUM_AUTHORITY_V4);
+      amount = swapSize.from.amount;
     }
 
     const usedSol = TRADE_AMOUNT / LAMPORTS_PER_SOL + token.fee;
