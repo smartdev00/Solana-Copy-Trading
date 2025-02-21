@@ -9,6 +9,7 @@ export interface TokenListType {
   symbol: string;
   decimals: number;
   pool: string | null;
+  status: 'bought' | 'pending'
 }
 
 export type AnalyzeType = {

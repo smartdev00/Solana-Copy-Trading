@@ -305,6 +305,7 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
           decimals: analyze.to.decimals,
           symbol: analyze.to.symbol,
           pool: analyze.pool_address,
+          status: 'bought',
         });
 
         logToFile(
@@ -330,13 +331,14 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
       const mintIn = new PublicKey(analyze.from.token_address);
 
       // Find the index of token in token list
-      const index = buyTokenList.findIndex((token) => token.mint.equals(mintIn));
+      const index = buyTokenList.findIndex((token) => token.mint.equals(mintIn) && token.status === 'bought');
 
       // Skip if you never bought this token
       if (index === -1) {
         return;
       }
       const token = buyTokenList[index];
+      token.status = 'pending';
 
       // Execute swap
       if (analyze.dex === 'Raydium' && analyze.pool_address) {
@@ -367,6 +369,7 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
         // If sale failed
       } else {
         handleError('Sale failed');
+        token.status = 'bought';
       }
     }
   } catch (error: any) {
@@ -387,10 +390,10 @@ async function calculateProfit(signature: string, token: TokenListType, dex: str
     let amount = 0;
     if (dex === 'Jupiter') {
       const transfers = getJupiterTransfers(transaction);
-      amount = transfers[1].amount / 10 ** token.decimals;
+      amount = transfers[1].amount / LAMPORTS_PER_SOL;
     } else {
-      const swapSize = await getRaydiumTradeSize(transaction, SOL_ADDRESS, token.mint, RAYDIUM_AUTHORITY_V4);
-      amount = swapSize.to.amount;
+      const swapSize = await getRaydiumTradeSize(transaction, token.mint, SOL_ADDRESS, RAYDIUM_AUTHORITY_V4);
+      amount = swapSize.from.amount;
     }
 
     const usedSol = TRADE_AMOUNT / LAMPORTS_PER_SOL + token.fee;
@@ -756,6 +759,7 @@ async function monitorToSell() {
       const indexesToDel: number[] = [];
       await Promise.all(
         buyTokenList.map(async (token, index) => {
+          token.status = 'pending';
           let success: boolean = false;
           let signature: string | null = null;
 
@@ -821,6 +825,7 @@ async function monitorToSell() {
             // If sale failed
           } else {
             handleError('Sale failed');
+            token.status = 'bought';
           }
         })
       );
