@@ -354,7 +354,14 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
       // If sale succeeds
       if (swapResult.success && swapResult.signature) {
         const { diffSol, profit } = await calculateProfit(swapResult.signature, token, analyze.dex);
-        logBuyOrSellTrigeer(false, diffSol, 100, analyze.from.symbol, swapResult.signature, profit.toString()); // Log sale success message
+        logBuyOrSellTrigeer(
+          false,
+          diffSol,
+          100,
+          analyze.from.symbol,
+          swapResult.signature,
+          roundToDecimal(profit, 3).toString()
+        ); // Log sale success message
 
         buyTokenList.splice(index, 1); // Remove the token from buy list
         logToFile(
@@ -810,7 +817,7 @@ async function monitorToSell() {
           // Successfully sold the token
           if (success && signature) {
             const { diffSol, profit } = await calculateProfit(signature, token, token.dex);
-            logBuyOrSellTrigeer(false, diffSol, 100, token.symbol, signature, profit.toString()); // Log sale success message
+            logBuyOrSellTrigeer(false, diffSol, 100, token.symbol, signature, roundToDecimal(profit, 3).toString()); // Log sale success message
 
             indexesToDel.unshift(index); // Add index of item to remove
             logToFile(
