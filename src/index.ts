@@ -268,6 +268,11 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
       // sound.play(soundFilePaths.buyTradeCopied);
       const mintOut = new PublicKey(analyze.to.token_address);
 
+      const balance = await getBalance(WALLET.publicKey);
+      if (balance < TRADE_AMOUNT) {
+        throw new Error(`Insufficient balance. You got ${balance}SOL, but you tried with ${TRADE_AMOUNT}SOL.`);
+      }
+
       // Execute the purchase transaction
       if (analyze.dex === 'Raydium' && analyze.pool_address) {
         swapResult = await raydiumSwap(SOL_ADDRESS, new PublicKey(analyze.pool_address), TRADE_AMOUNT);
@@ -283,6 +288,9 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
         });
         if (!transaction) {
           throw new Error(`Invalid transaction signature ${swapResult.signature}.`);
+        }
+        if (transaction.meta?.err) {
+          throw new Error(`Transaction has failed. ${swapResult.signature} Please check your balance.`);
         }
 
         // const swapSize = await getRaydiumTradeSize(transaction, SOL_ADDRESS, mintOut, WALLET.publicKey);
@@ -429,7 +437,7 @@ function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
       1;
 
     if (lastIxIdx === -1) {
-      throw new Error('Non Jupiter Swap');
+      throw new Error(`Non Jupiter Swap ${transaction.transaction.signatures[0]}`);
     }
 
     const transfers: { amount: any; source: any; destination: any; authority: any }[] = [];
@@ -456,7 +464,7 @@ function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
     });
 
     if (transfers.length < 2) {
-      throw new Error('Invalid Jupiter Swap');
+      throw new Error(`Invalid Jupiter Swap ${transaction.transaction.signatures}`);
     }
 
     return [
@@ -467,6 +475,16 @@ function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
     ];
   } catch (error: any) {
     throw new Error(error.message || 'Unexpected error while extracting transfers from jupiter dex.');
+  }
+}
+
+async function getBalance(publicKey: PublicKey) {
+  try {
+    const balance = await connection1.getBalance(publicKey);
+    console.log(balance);
+    return balance;
+  } catch (error: any) {
+    throw new Error(error.message || `Unexpected error while fetching SOL balance of wallet ${publicKey.toString()}`);
   }
 }
 
