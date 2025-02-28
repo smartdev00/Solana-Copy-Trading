@@ -5,16 +5,7 @@ import sound from 'sound-play';
 import bs58 from 'bs58';
 import chalk from 'chalk';
 import { Metaplex } from '@metaplex-foundation/js';
-import {
-  Keypair,
-  PublicKey,
-  Connection,
-  ParsedTransactionWithMeta,
-  PartiallyDecodedInstruction,
-  ParsedInstruction,
-  ParsedAccountData,
-  LAMPORTS_PER_SOL,
-} from '@solana/web3.js';
+import { Keypair, PublicKey, Connection, ParsedTransactionWithMeta, PartiallyDecodedInstruction, ParsedInstruction, ParsedAccountData, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { liquidityStateV4Layout, Raydium, ApiV3PoolInfoStandardItem } from '@raydium-io/raydium-sdk-v2';
 import { getAssociatedTokenAddressSync } from '@solana/spl-token';
 import { logBuyOrSellTrigeer, logCircular, logError, logSkipped, logger, roundToDecimal } from './utils';
@@ -114,11 +105,7 @@ let buyTokenList: TokenListType[] = [];
 async function monitorNewToken() {
   console.info(chalk.bgWhite.black('       🛠  BOT INITIALIZED       '));
   console.log('🔍 Monitoring Target Wallet:', chalk.magenta(TARGET_WALLET_ADDRESS.toString()));
-  console.info(
-    `🔷 Min Trade Size: ${chalk.yellow(TARGET_WALLET_MIN_TRADE / LAMPORTS_PER_SOL)} SOL | Trading Amount:`,
-    TRADE_AMOUNT / LAMPORTS_PER_SOL,
-    'SOL'
-  );
+  console.info(`🔷 Min Trade Size: ${chalk.yellow(TARGET_WALLET_MIN_TRADE / LAMPORTS_PER_SOL)} SOL | Trading Amount:`, TRADE_AMOUNT / LAMPORTS_PER_SOL, 'SOL');
   console.log(chalk.gray('-------------------------------------------------------------------------'));
   // let pool = false;
 
@@ -214,16 +201,8 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
       analyze.type,
       TARGET_WALLET_ADDRESS.toString(),
       analyze.dex,
-      analyze.type === 'Buy'
-        ? analyze.to.token_address
-        : analyze.type === 'Sell'
-        ? analyze.from.token_address
-        : analyze.from.token_address + analyze.to.token_address,
-      analyze.type === 'Buy'
-        ? analyze.from.amount.toString()
-        : analyze.type === 'Sell'
-        ? analyze.to.amount.toString()
-        : '',
+      analyze.type === 'Buy' ? analyze.to.token_address : analyze.type === 'Sell' ? analyze.from.token_address : analyze.from.token_address + analyze.to.token_address,
+      analyze.type === 'Buy' ? analyze.from.amount.toString() : analyze.type === 'Sell' ? analyze.to.amount.toString() : '',
       'Monitored new transaction'
     );
     logger(analyze);
@@ -238,16 +217,8 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
         'Skipped',
         TARGET_WALLET_ADDRESS.toString(),
         analyze.dex,
-        analyze.type === 'Buy'
-          ? analyze.to.token_address
-          : analyze.type === 'Sell'
-          ? analyze.from.token_address
-          : analyze.from.token_address + analyze.to.token_address,
-        analyze.type === 'Buy'
-          ? analyze.from.amount.toString()
-          : analyze.type === 'Sell'
-          ? analyze.to.amount.toString()
-          : '',
+        analyze.type === 'Buy' ? analyze.to.token_address : analyze.type === 'Sell' ? analyze.from.token_address : analyze.from.token_address + analyze.to.token_address,
+        analyze.type === 'Buy' ? analyze.from.amount.toString() : analyze.type === 'Sell' ? analyze.to.amount.toString() : '',
         'Below minimum trade size'
       );
       return;
@@ -270,7 +241,7 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 
       const balance = await getBalance(WALLET.publicKey);
       if (balance < TRADE_AMOUNT) {
-        throw new Error(`Insufficient balance. You got ${balance}SOL, but you tried with ${TRADE_AMOUNT}SOL.`);
+        throw new Error(`Insufficient balance. You got ${balance / LAMPORTS_PER_SOL}SOL, but you tried with ${TRADE_AMOUNT / LAMPORTS_PER_SOL}SOL.`);
       }
 
       // Execute the purchase transaction
@@ -316,14 +287,7 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
           status: 'bought',
         });
 
-        logToFile(
-          'Buy Success',
-          TARGET_WALLET_ADDRESS.toString(),
-          analyze.dex,
-          mintOut.toString(),
-          tokenAmount.toString(),
-          'Succeed copying buy.'
-        );
+        logToFile('Buy Success', TARGET_WALLET_ADDRESS.toString(), analyze.dex, mintOut.toString(), tokenAmount.toString(), 'Succeed copying buy.');
 
         logBuyOrSellTrigeer(true, TRADE_AMOUNT / 1_000_000_000, tokenAmount, analyze.to.symbol, swapResult.signature); // Log the purchase success message
 
@@ -350,11 +314,7 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 
       // Execute swap
       if (analyze.dex === 'Raydium' && analyze.pool_address) {
-        swapResult = await raydiumSwap(
-          mintIn,
-          new PublicKey(analyze.pool_address),
-          Math.floor(token.amount * 10 ** token.decimals)
-        );
+        swapResult = await raydiumSwap(mintIn, new PublicKey(analyze.pool_address), Math.floor(token.amount * 10 ** token.decimals));
       } else if (analyze.dex === 'Jupiter') {
         swapResult = await jupiterSwap(mintIn, SOL_ADDRESS, Math.floor(token.amount * 10 ** token.decimals));
       }
@@ -362,24 +322,10 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
       // If sale succeeds
       if (swapResult.success && swapResult.signature) {
         const { diffSol, profit } = await calculateProfit(swapResult.signature, token, analyze.dex);
-        logBuyOrSellTrigeer(
-          false,
-          diffSol,
-          100,
-          analyze.from.symbol,
-          swapResult.signature,
-          roundToDecimal(profit, 3).toString()
-        ); // Log sale success message
+        logBuyOrSellTrigeer(false, diffSol, 100, analyze.from.symbol, swapResult.signature, roundToDecimal(profit, 3).toString()); // Log sale success message
 
         buyTokenList.splice(index, 1); // Remove the token from buy list
-        logToFile(
-          'Sell Success',
-          TARGET_WALLET_ADDRESS.toString(),
-          analyze.dex,
-          mintIn.toString(),
-          diffSol.toString(),
-          'Succeed copying sell.'
-        );
+        logToFile('Sell Success', TARGET_WALLET_ADDRESS.toString(), analyze.dex, mintIn.toString(), diffSol.toString(), 'Succeed copying sell.');
 
         // If sale failed
       } else {
@@ -467,12 +413,7 @@ function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
       throw new Error(`Invalid Jupiter Swap ${transaction.transaction.signatures}`);
     }
 
-    return [
-      transfers[0],
-      transfers[transfers.length - 1].authority === TARGET_WALLET_ADDRESS.toString()
-        ? transfers[transfers.length - 2]
-        : transfers[transfers.length - 1],
-    ];
+    return [transfers[0], transfers[transfers.length - 1].authority === TARGET_WALLET_ADDRESS.toString() ? transfers[transfers.length - 2] : transfers[transfers.length - 1]];
   } catch (error: any) {
     throw new Error(error.message || 'Unexpected error while extracting transfers from jupiter dex.');
   }
@@ -506,12 +447,7 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
       return {
         signature,
         target_wallet: TARGET_WALLET_ADDRESS.toString(),
-        type:
-          tokenIn?.mint === SOL_ADDRESS.toString()
-            ? 'Buy'
-            : tokenOut?.mint === SOL_ADDRESS.toString()
-            ? 'Sell'
-            : 'Swap',
+        type: tokenIn?.mint === SOL_ADDRESS.toString() ? 'Buy' : tokenOut?.mint === SOL_ADDRESS.toString() ? 'Sell' : 'Swap',
         dex,
         pool_address: null,
         from: {
@@ -539,11 +475,7 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
         for (const acc of accounts) {
           const poolInfo = await connection1.getAccountInfo(acc, { commitment: 'confirmed' });
 
-          if (
-            poolInfo?.owner.equals(RAYDIUM_LIQUIDITYPOOL_V4) &&
-            poolInfo.data.length === 752 &&
-            !poolAccounts.some((p) => p.equals(acc))
-          ) {
+          if (poolInfo?.owner.equals(RAYDIUM_LIQUIDITYPOOL_V4) && poolInfo.data.length === 752 && !poolAccounts.some((p) => p.equals(acc))) {
             poolAccounts.push(acc);
           }
         }
@@ -569,9 +501,7 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
         type = trade.type === 'Sell' ? 'Buy' : trade.type === 'Buy' ? 'Sell' : 'Swap';
       } else {
         const { baseMint: baseMint1, quoteMint: quoteMint1 } = await getInforFromRaydiumPool(poolAccounts[0]);
-        const { baseMint: baseMint2, quoteMint: quoteMint2 } = await getInforFromRaydiumPool(
-          poolAccounts[poolAccounts.length - 1]
-        );
+        const { baseMint: baseMint2, quoteMint: quoteMint2 } = await getInforFromRaydiumPool(poolAccounts[poolAccounts.length - 1]);
 
         ({ from } = await getRaydiumTradeSize(transaction, baseMint1, quoteMint1, TARGET_WALLET_ADDRESS));
         ({ to } = await getRaydiumTradeSize(transaction, baseMint2, quoteMint2, TARGET_WALLET_ADDRESS));
@@ -607,34 +537,22 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
   }
 }
 
-async function getRaydiumTradeSize(
-  transaction: ParsedTransactionWithMeta,
-  baseMint: PublicKey,
-  quoteMint: PublicKey,
-  owner: PublicKey
-) {
+async function getRaydiumTradeSize(transaction: ParsedTransactionWithMeta, baseMint: PublicKey, quoteMint: PublicKey, owner: PublicKey) {
   try {
     const postTokenBalances = transaction.meta?.postTokenBalances?.filter((p) => p.owner === owner.toString());
     const preTokenBalances = transaction.meta?.preTokenBalances?.filter((p) => p.owner === owner.toString());
 
-    const basePostTokenBal =
-      postTokenBalances?.find((p) => p.mint === baseMint?.toString())?.uiTokenAmount.uiAmount || 0;
+    const basePostTokenBal = postTokenBalances?.find((p) => p.mint === baseMint?.toString())?.uiTokenAmount.uiAmount || 0;
     const basePreTokenBal = preTokenBalances?.find((p) => p.mint === baseMint?.toString())?.uiTokenAmount.uiAmount || 0;
 
-    const quotePostTokenBal =
-      postTokenBalances?.find((p) => p.mint === quoteMint?.toString())?.uiTokenAmount.uiAmount || 0;
-    const quotePreTokenBal =
-      preTokenBalances?.find((p) => p.mint === quoteMint?.toString())?.uiTokenAmount.uiAmount || 0;
+    const quotePostTokenBal = postTokenBalances?.find((p) => p.mint === quoteMint?.toString())?.uiTokenAmount.uiAmount || 0;
+    const quotePreTokenBal = preTokenBalances?.find((p) => p.mint === quoteMint?.toString())?.uiTokenAmount.uiAmount || 0;
 
     const baseDiff = new BigNumber(basePostTokenBal).minus(new BigNumber(basePreTokenBal)).toNumber();
     const quoteDiff = new BigNumber(quotePostTokenBal).minus(new BigNumber(quotePreTokenBal)).toNumber();
 
     const [less, lessA, bigger, biggerA] =
-      baseDiff < 0
-        ? [baseMint, baseDiff, quoteMint, quoteDiff]
-        : quoteDiff < 0
-        ? [quoteMint, quoteDiff, baseMint, baseDiff]
-        : [baseMint, baseDiff, quoteMint, quoteDiff];
+      baseDiff < 0 ? [baseMint, baseDiff, quoteMint, quoteDiff] : quoteDiff < 0 ? [quoteMint, quoteDiff, baseMint, baseDiff] : [baseMint, baseDiff, quoteMint, quoteDiff];
 
     let type = '';
     if (less.equals(SOL_ADDRESS)) {
@@ -682,8 +600,7 @@ async function getTokenMintAddress(source: string, destination: string) {
     if (!accountInfo.value) accountInfo = await connection1.getParsedAccountInfo(new PublicKey(destination));
     const tokenInfo = (accountInfo.value?.data as ParsedAccountData).parsed?.info;
     const tokenInfor = await getTokenInfo(connection1, new PublicKey(tokenInfo?.mint));
-    const symbol =
-      tokenInfor?.address !== SOL_ADDRESS.toString() && tokenInfor?.symbol === 'SOL' ? 'SPL Token' : tokenInfor?.symbol;
+    const symbol = tokenInfor?.address !== SOL_ADDRESS.toString() && tokenInfor?.symbol === 'SOL' ? 'SPL Token' : tokenInfor?.symbol;
     return {
       mint: tokenInfo?.mint || null,
       decimals: Number(tokenInfo?.tokenAmount?.decimals),
@@ -790,12 +707,7 @@ async function monitorToSell() {
 
           // If token is bought on Jupiter dex
           if (token.dex === 'Jupiter') {
-            const quote = await getQuoteForSwap(
-              token.mint.toString(),
-              SOL_ADDRESS.toString(),
-              token.amount * 10 ** token.decimals,
-              SLIPPAGE
-            );
+            const quote = await getQuoteForSwap(token.mint.toString(), SOL_ADDRESS.toString(), token.amount * 10 ** token.decimals, SLIPPAGE);
             if (quote.error) {
               return;
             }
@@ -808,11 +720,7 @@ async function monitorToSell() {
 
             // sound.play(soundFilePaths.sellTrade);
             // Sell token if its profitable
-            ({ success, signature } = await jupiterSwap(
-              token.mint,
-              SOL_ADDRESS,
-              Math.floor(token.amount * 10 ** token.decimals)
-            ));
+            ({ success, signature } = await jupiterSwap(token.mint, SOL_ADDRESS, Math.floor(token.amount * 10 ** token.decimals)));
 
             // If token is bought on Raydium dex
           } else {
@@ -825,11 +733,7 @@ async function monitorToSell() {
             }
             // sound.play(soundFilePaths.sellTrade);
 
-            ({ success, signature } = await raydiumSwap(
-              mint,
-              new PublicKey(pool),
-              token.amount * 10 ** token.decimals
-            ));
+            ({ success, signature } = await raydiumSwap(mint, new PublicKey(pool), token.amount * 10 ** token.decimals));
           }
 
           // Successfully sold the token
@@ -838,14 +742,7 @@ async function monitorToSell() {
             logBuyOrSellTrigeer(false, diffSol, 100, token.symbol, signature, roundToDecimal(profit, 3).toString()); // Log sale success message
 
             indexesToDel.unshift(index); // Add index of item to remove
-            logToFile(
-              'Sell Success',
-              TARGET_WALLET_ADDRESS.toString(),
-              token.dex,
-              token.mint.toString(),
-              diffSol.toString(),
-              'Auto sell triggered'
-            );
+            logToFile('Sell Success', TARGET_WALLET_ADDRESS.toString(), token.dex, token.mint.toString(), diffSol.toString(), 'Auto sell triggered');
 
             // If sale failed
           } else {
