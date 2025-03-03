@@ -11,7 +11,7 @@ Designed to be **fast, efficient, and customizable**, the bot is intended for **
 ## Features
 
 - **Real-Time Trade Copying**:
-  - Monitors **a single target Solana wallet** for buy/sell activity.
+  - Monitors **one or more target Solana wallets** for buy/sell activity.
   - Detects **buy/sell swaps** on both **Raydium and Jupiter** DEXs.
   - Executes copy trades instantly if the trade size threshold is met.
 
@@ -102,9 +102,16 @@ npm install
    npm run start ../my_config.env
    ```
 
-**Multiple Instances:**
-- You **can run multiple instances of the bot** to track different target wallets.
-- You **can use the same Helius API key for all instances.**
+**Running Multiple Instances (Copy-Trading Multiple Wallets)**
+- You can run **multiple instances** of the bot to copy-trade different wallets.
+- You can use the **same Helius API key** for all instances.
+- Create separate config files (`wallet1.env`, `wallet2.env`, etc.).
+- Open a new terminal for each instance and start the bot:
+  ```bash
+  npm run start ../wallet1.env
+  npm run start ../wallet2.env
+  ```
+- Ensure you run `npm run build` before the first execution.
 
 You should see output similar to:
 ```
@@ -154,13 +161,10 @@ You should see output similar to:
 
 ## Future Improvements
 
-1. **Multi-Wallet Support**
-   - Ability to **copy trade multiple wallets simultaneously** in a single instance.
-
-2. **Liquidity-Based Trade Filtering**
+1. **Liquidity-Based Trade Filtering**
    - Ensure sufficient liquidity exists before executing copy trades.
 
-3. **More Customizable Trading Strategies**
+2. **More Customizable Trading Strategies**
    - Adding Stop Loss (SL) functionality.
    - Implementing **advanced trade execution options**.
 
