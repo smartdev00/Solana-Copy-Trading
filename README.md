@@ -105,13 +105,13 @@ npm install
 **Running Multiple Instances (Copy-Trading Multiple Wallets)**
 - You can run **multiple instances** of the bot to copy-trade different wallets.
 - You can use the **same Helius API key** for all instances.
-- Create separate config files ('wallet1.env', 'wallet2.env', etc.).
+- Create separate config files (`wallet1.env`, `wallet2.env`, etc.).
 - Open a new terminal for each instance and start the bot:
   ```bash
   npm run start ../wallet1.env
   npm run start ../wallet2.env
   ```
-- Ensure you run 'npm run build' before the first execution.
+- Ensure you run `npm run build` before the first execution.
 
 You should see output similar to:
 ```
