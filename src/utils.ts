@@ -11,8 +11,8 @@ export const logSkipped = (solDiff: number) => {
 };
 
 export function logError(str?: string) {
-  console.log('❌', `${chalk.red('ERROR:')}: ${str || 'Failed to process transaction due to low balance.'}`);
-  logLine();
+  // console.log('❌', `${chalk.red('ERROR:')}: ${str || 'Failed to process transaction due to low balance.'}`);
+  // logLine();
 }
 
 export function logCircular(str?: string) {
