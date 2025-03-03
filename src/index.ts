@@ -170,7 +170,6 @@ async function handleError(error: string) {
       }, ERROR_SOUND_SKIP_TIME);
     }
   } catch (err) {
-    console.error('Error handling error:', err); // Log any errors that occur
   }
 }
 
@@ -422,7 +421,6 @@ function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
 async function getBalance(publicKey: PublicKey) {
   try {
     const balance = await connection1.getBalance(publicKey);
-    console.log(balance);
     return balance;
   } catch (error: any) {
     throw new Error(error.message || `Unexpected error while fetching SOL balance of wallet ${publicKey.toString()}`);
@@ -532,7 +530,6 @@ async function analyzeTransaction(transaction: ParsedTransactionWithMeta, signat
       } as AnalyzeType;
     }
   } catch (error: any) {
-    console.error(error);
     throw new Error(error.message || 'Unexpected error while analyzing transaction.');
   }
 }
