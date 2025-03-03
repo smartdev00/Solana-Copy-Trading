@@ -47,7 +47,8 @@ const SOL_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112')
 const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY || ''));
 const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
 const COMPUTE_PRICE = 100000;
-const LIMIT_ORDER = 1.25; // for test
+const LIMIT_ORDER_PROFIT = 1.25; // 25% profit
+const LIMIT_ORDER_LOSS = 0.85; // 15% loss
 const SLIPPAGE = 500;
 const ERROR_SOUND_SKIP_TIME = 10000;
 
@@ -169,8 +170,7 @@ async function handleError(error: string) {
         prevError = '';
       }, ERROR_SOUND_SKIP_TIME);
     }
-  } catch (err) {
-  }
+  } catch (err) {}
 }
 
 function identifyDex(logs: string[]) {
@@ -708,10 +708,11 @@ async function monitorToSell() {
             if (quote.error) {
               return;
             }
-            const targetAmount = Math.floor(TRADE_AMOUNT * LIMIT_ORDER); // target profit
+            const targetProfitLimit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER_PROFIT); // target profit
+            const targetLossLimit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER_LOSS); // target profit
 
             // If sell is non profitable
-            if (Number(quote.outAmount) < targetAmount) {
+            if (Number(quote.outAmount) < targetProfitLimit || Number(quote.outAmount) > targetLossLimit) {
               return;
             }
 
@@ -761,13 +762,14 @@ async function monitorToSell() {
 
 async function isProfitable(mint: PublicKey, pool: PublicKey) {
   try {
-    const targetProfit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER);
+    const targetProfit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER_PROFIT);
+    const targetLossLimit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER_LOSS);
     const tokenBalance = await getATABalance(mint, WALLET.publicKey);
     const [solReserve, baseReserve] = await getReserves(mint, pool);
 
     const expectedSolAmount = expectAmountOut(tokenBalance, baseReserve, solReserve);
 
-    if (expectedSolAmount > BigInt(targetProfit)) {
+    if (expectedSolAmount > BigInt(targetProfit) || expectedSolAmount < BigInt(targetLossLimit)) {
       return true;
     }
     return false;
