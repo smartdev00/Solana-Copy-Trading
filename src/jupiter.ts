@@ -3,7 +3,7 @@ import { Connection, VersionedTransaction } from '@solana/web3.js';
 export async function getQuoteForSwap(inputAddr: string, outputAddr: string, amount: number, slippageBps: number) {
   try {
     const response = await fetch(
-      `https://quote-api.jup.ag/v6/quote?inputMint=${inputAddr}&outputMint=${outputAddr}&amount=${amount}&slippageBps=${slippageBps}`
+      `https://api.jup.ag/swap/v1/quote?inputMint=${inputAddr}&outputMint=${outputAddr}&amount=${amount}&slippageBps=${slippageBps}`
     );
     const quote: any = await response.json();
     if (quote.error) {
@@ -18,7 +18,7 @@ export async function getQuoteForSwap(inputAddr: string, outputAddr: string, amo
 
 export async function getSerializedTransaction(quote: any, publicKey: string, priorityFee: number) {
   try {
-    const response = await fetch('https://quote-api.jup.ag/v6/swap', {
+    const response = await fetch('https://api.jup.ag/swap/v1/swap', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
