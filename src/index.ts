@@ -47,7 +47,8 @@ const SOL_ADDRESS = new PublicKey('So11111111111111111111111111111111111111112')
 const WALLET = Keypair.fromSecretKey(bs58.decode(process.env.WALLET_PRIVATE_KEY || ''));
 const TRADE_AMOUNT = parseInt(process.env.TRADE_AMOUNT || '0');
 const COMPUTE_PRICE = 100000;
-const LIMIT_ORDER = 1.25; // for test
+const LIMIT_ORDER_PROFIT = 1.25; // 25% profit
+const LIMIT_ORDER_LOSS = 0.85; // 15% loss
 const SLIPPAGE = 500;
 const ERROR_SOUND_SKIP_TIME = 10000;
 
@@ -169,8 +170,7 @@ async function handleError(error: string) {
         prevError = '';
       }, ERROR_SOUND_SKIP_TIME);
     }
-  } catch (err) {
-  }
+  } catch (err) {}
 }
 
 function identifyDex(logs: string[]) {
@@ -396,6 +396,13 @@ function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
               destination: ix.parsed.info.destination,
               authority: ix.parsed.info.authority,
             });
+          } else if (ix.parsed?.type === 'transfer' && ix.parsed.info.lamports) {
+            transfers.push({
+              amount: ix.parsed.info.lamports,
+              source: ix.parsed.info.source,
+              destination: ix.parsed.info.destination,
+              authority: ix.parsed.info.authority,
+            });
           } else if (ix.parsed?.type === 'transferChecked' && ix.parsed.info.tokenAmount.amount) {
             transfers.push({
               amount: ix.parsed.info.tokenAmount.amount,
@@ -409,7 +416,7 @@ function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
     });
 
     if (transfers.length < 2) {
-      throw new Error(`Invalid Jupiter Swap ${transaction.transaction.signatures}`);
+      throw new Error(`Unhandled Jupiter Swap ${transaction.transaction.signatures}`);
     }
 
     return [transfers[0], transfers[transfers.length - 1].authority === TARGET_WALLET_ADDRESS.toString() ? transfers[transfers.length - 2] : transfers[transfers.length - 1]];
@@ -617,12 +624,61 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: numb
     });
 
     const poolKeys = await raydium.liquidity.getAmmPoolKeys(pool.toString());
-    let poolInfo: ApiV3PoolInfoStandardItem | null = null;
-
-    while (poolInfo === null) {
-      poolInfo = (await raydium.api.fetchPoolById({ ids: pool.toString() }))[0] as ApiV3PoolInfoStandardItem;
-      await sleep(500);
-    }
+    const poolInfo = {
+      type: 'Standard',
+      programId: poolKeys.programId,
+      rewardDefaultPoolInfos: 'Raydium',
+      id: poolKeys.id,
+      mintA: poolKeys.mintA,
+      mintB: poolKeys.mintB,
+      lpMint: poolKeys.mintLp,
+      marketId: poolKeys.marketId,
+      rewardDefaultInfos: [],
+      price: 0,
+      configId: '',
+      month: {
+        volume: 0,
+        volumeQuote: 0,
+        volumeFee: 0,
+        apr: 0,
+        feeApr: 0,
+        priceMin: 0,
+        priceMax: 0,
+        rewardApr: [],
+      },
+      week: {
+        volume: 0,
+        volumeQuote: 0,
+        volumeFee: 0,
+        apr: 0,
+        feeApr: 0,
+        priceMin: 0,
+        priceMax: 0,
+        rewardApr: [],
+      },
+      day: {
+        volume: 0,
+        volumeQuote: 0,
+        volumeFee: 0,
+        apr: 0,
+        feeApr: 0,
+        priceMin: 0,
+        priceMax: 0,
+        rewardApr: [],
+      },
+      lpPrice: 0,
+      lpAmount: 0,
+      burnPercent: 0,
+      farmUpcomingCount: 0,
+      farmOngoingCount: 0,
+      farmFinishedCount: 0,
+      feeRate: 0,
+      mintAmountA: 0,
+      mintAmountB: 0,
+      openTime: '',
+      pooltype: [],
+      tvl: 0,
+    } as ApiV3PoolInfoStandardItem;
 
     const rpcData = await raydium.liquidity.getRpcPoolInfo(pool.toString());
 
@@ -704,14 +760,15 @@ async function monitorToSell() {
 
           // If token is bought on Jupiter dex
           if (token.dex === 'Jupiter') {
-            const quote = await getQuoteForSwap(token.mint.toString(), SOL_ADDRESS.toString(), token.amount * 10 ** token.decimals, SLIPPAGE);
+            const quote = await getQuoteForSwap(token.mint.toString(), SOL_ADDRESS.toString(), Math.floor(token.amount * 10 ** token.decimals), SLIPPAGE);
             if (quote.error) {
               return;
             }
-            const targetAmount = Math.floor(TRADE_AMOUNT * LIMIT_ORDER); // target profit
+            const targetProfitLimit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER_PROFIT); // target profit
+            const targetLossLimit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER_LOSS); // target profit
 
             // If sell is non profitable
-            if (Number(quote.outAmount) < targetAmount) {
+            if (Number(quote.outAmount) < targetProfitLimit || Number(quote.outAmount) > targetLossLimit) {
               return;
             }
 
@@ -761,13 +818,14 @@ async function monitorToSell() {
 
 async function isProfitable(mint: PublicKey, pool: PublicKey) {
   try {
-    const targetProfit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER);
+    const targetProfit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER_PROFIT);
+    const targetLossLimit = Math.floor(TRADE_AMOUNT * LIMIT_ORDER_LOSS);
     const tokenBalance = await getATABalance(mint, WALLET.publicKey);
     const [solReserve, baseReserve] = await getReserves(mint, pool);
 
     const expectedSolAmount = expectAmountOut(tokenBalance, baseReserve, solReserve);
 
-    if (expectedSolAmount > BigInt(targetProfit)) {
+    if (expectedSolAmount > BigInt(targetProfit) || expectedSolAmount < BigInt(targetLossLimit)) {
       return true;
     }
     return false;
@@ -848,3 +906,12 @@ monitorNewToken();
 // Monitor whether it's profitable to sell the token.
 // If so perform tradingm otherwise skip.
 monitorToSell();
+
+async function test(signature: string) {
+  const tx = await connection1.getParsedTransaction(signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
+  if (!tx) return;
+  const return1  = await getJupiterTransfers(tx);
+  console.log(return1)
+}
+// test('4t5bdMnLf4L4oZS45CX5YP4RgYbGeZ9SoNTS2hG11mEP6KoJDKe7rWcYGdCtiDwAcVRNFywcvKcXDiR6BuNVNFNZ');
+// test('4BJwE5YXKCT2oFhYbFNGD8kDDLXhZLLMdgnwPFa4jxbvrY54djAScD7bm3DwQrsmdWADpASQf3AShmGoAkfKyYpf');
