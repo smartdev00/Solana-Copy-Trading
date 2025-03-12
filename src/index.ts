@@ -697,7 +697,7 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: numb
       amountIn: new BN(inAmount),
       mintIn: mintIn.address,
       mintOut: mintOut.address,
-      slippage: 0.1,
+      slippage: 0.5,
     });
 
     const { execute } = await raydium.liquidity.swap({
@@ -906,12 +906,3 @@ monitorNewToken();
 // Monitor whether it's profitable to sell the token.
 // If so perform tradingm otherwise skip.
 monitorToSell();
-
-async function test(signature: string) {
-  const tx = await connection1.getParsedTransaction(signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
-  if (!tx) return;
-  const return1  = await getJupiterTransfers(tx);
-  console.log(return1)
-}
-// test('4t5bdMnLf4L4oZS45CX5YP4RgYbGeZ9SoNTS2hG11mEP6KoJDKe7rWcYGdCtiDwAcVRNFywcvKcXDiR6BuNVNFNZ');
-// test('4BJwE5YXKCT2oFhYbFNGD8kDDLXhZLLMdgnwPFa4jxbvrY54djAScD7bm3DwQrsmdWADpASQf3AShmGoAkfKyYpf');
