@@ -6,13 +6,14 @@ import bs58 from 'bs58';
 import chalk from 'chalk';
 import { Metaplex } from '@metaplex-foundation/js';
 import { Keypair, PublicKey, Connection, ParsedTransactionWithMeta, PartiallyDecodedInstruction, ParsedInstruction, ParsedAccountData, LAMPORTS_PER_SOL } from '@solana/web3.js';
-import { liquidityStateV4Layout, Raydium, ApiV3PoolInfoStandardItem } from '@raydium-io/raydium-sdk-v2';
-import { getAssociatedTokenAddressSync } from '@solana/spl-token';
+import { liquidityStateV4Layout, Raydium, ApiV3PoolInfoStandardItem, SYSTEM_PROGRAM_ID } from '@raydium-io/raydium-sdk-v2';
+import { getAssociatedTokenAddressSync, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { logBuyOrSellTrigeer, logCircular, logError, logSkipped, logger, roundToDecimal } from './utils';
 import { BN } from '@coral-xyz/anchor';
 import BigNumber from 'bignumber.js';
 import { executeTransaction, getDeserialize, getQuoteForSwap, getSerializedTransaction } from './jupiter';
 import { TokenListType, AnalyzeType, TokenInforType } from './types';
+import { PUMP_DOT_FUN } from './config';
 
 if (process.argv.length !== 3) {
   console.error('Error launching app:');
@@ -176,6 +177,9 @@ async function handleError(error: string) {
 function identifyDex(logs: string[]) {
   try {
     if (!logs.length) return null;
+    if (logs.some((log) => log.includes(PUMP_DOT_FUN.toString()))) {
+      return null;
+    }
     if (logs.some((log) => log.includes(JUPITER_AGGREGATOR_V6.toString()))) {
       return 'Jupiter';
     }
@@ -252,10 +256,16 @@ async function processTransaction(transaction: ParsedTransactionWithMeta, signat
 
       // If purchase succeeds
       if (swapResult.success && swapResult.signature) {
-        const transaction = await connection1.getParsedTransaction(swapResult.signature, {
-          commitment: 'confirmed',
-          maxSupportedTransactionVersion: 0,
-        });
+        let retries = 3;
+        let transaction: ParsedTransactionWithMeta | null = null;
+        while (!transaction && retries > 0) {
+          transaction = await connection1.getParsedTransaction(swapResult.signature, {
+            commitment: 'confirmed',
+            maxSupportedTransactionVersion: 0,
+          });
+          retries--;
+          sleep(1000);
+        }
         if (!transaction) {
           throw new Error(`Invalid transaction signature ${swapResult.signature}.`);
         }
@@ -389,21 +399,32 @@ function getJupiterTransfers(transaction: ParsedTransactionWithMeta) {
     transaction.meta?.innerInstructions?.forEach((instruction) => {
       if (instruction.index <= lastIxIdx && instruction.index >= startIxIdx) {
         (instruction.instructions as ParsedInstruction[]).forEach((ix) => {
-          if (ix.parsed?.type === 'transfer' && ix.parsed.info.amount) {
+          if (ix.parsed?.type === 'transfer' && ix.parsed.info.amount && (ix.programId.equals(TOKEN_PROGRAM_ID) || ix.programId.equals(TOKEN_2022_PROGRAM_ID))) {
             transfers.push({
               amount: ix.parsed.info.amount,
               source: ix.parsed.info.source,
               destination: ix.parsed.info.destination,
               authority: ix.parsed.info.authority,
             });
-          } else if (ix.parsed?.type === 'transfer' && ix.parsed.info.lamports) {
-            transfers.push({
-              amount: ix.parsed.info.lamports,
-              source: ix.parsed.info.source,
-              destination: ix.parsed.info.destination,
-              authority: ix.parsed.info.authority,
-            });
-          } else if (ix.parsed?.type === 'transferChecked' && ix.parsed.info.tokenAmount.amount) {
+          }
+          // else if (
+          //   ix.parsed?.type === 'transfer' &&
+          //   ix.parsed.info.lamports &&
+          //   ix.programId.equals(SYSTEM_PROGRAM_ID) &&
+          //   transaction.transaction.message.accountKeys.some((a) => a.pubkey.equals(PUMP_DOT_FUN))
+          // ) {
+          //   transfers.push({
+          //     amount: ix.parsed.info.lamports,
+          //     source: ix.parsed.info.source,
+          //     destination: ix.parsed.info.destination,
+          //     authority: ix.parsed.info.authority,
+          //   });
+          // }
+          else if (
+            ix.parsed?.type === 'transferChecked' &&
+            ix.parsed.info.tokenAmount.amount &&
+            (ix.programId.equals(TOKEN_PROGRAM_ID) || ix.programId.equals(TOKEN_2022_PROGRAM_ID))
+          ) {
             transfers.push({
               amount: ix.parsed.info.tokenAmount.amount,
               source: ix.parsed.info.source,
@@ -721,7 +742,7 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: numb
       return { success: false, signature: null };
     }
   } catch (error: any) {
-    throw new Error(error.message || 'Unexpected error while swapping on Raydium');
+    throw new Error('Transacion has failed because of insufficient funds or low slippage.');
   }
 }
 
