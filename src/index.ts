@@ -741,6 +741,7 @@ async function raydiumSwap(mintInPub: PublicKey, pool: PublicKey, inAmount: numb
     } else {
       return { success: false, signature: null };
     }
+    
   } catch (error: any) {
     throw new Error('Transacion has failed because of insufficient funds or low slippage.');
   }
